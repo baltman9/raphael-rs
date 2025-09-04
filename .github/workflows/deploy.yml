@@ -12,8 +12,10 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     env:
-      RUSTFLAGS: "--cfg=web_sys_unstable_apis"
+      RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
+      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
       BASE_URL: "https://crafting.bryansmedia.com"
 
     steps:
@@ -30,14 +32,25 @@ jobs:
         run: |
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
+          [build]
+          target = "wasm32-unknown-unknown"
+
           [target.wasm32-unknown-unknown]
           rustflags = [
-            "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals"
+            "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+            # linker args recommended for shared memory
+            "-C", "link-arg=--shared-memory",
+            "-C", "link-arg=--max-memory=4294967296",
           ]
 
           [unstable]
           build-std = ["panic_abort", "std"]
           EOF
+
+          echo "----- rustc -----"
+          rustc -Vv
+          echo "----- cargo -----"
+          cargo -Vv
           echo "----- .cargo/config.toml -----"
           cat .cargo/config.toml
 
@@ -56,9 +69,11 @@ jobs:
       - name: Build web (release)
         run: |
           trunk build index.html --release --dist dist
+
           RAND=$(head -c16 /dev/urandom | md5sum | cut -c1-8)
           if [ -f dist/webworker.js ]; then mv dist/webworker.js dist/webworker-${RAND}.js; fi
           if [ -f dist/webworker_bg.wasm ]; then mv dist/webworker_bg.wasm dist/webworker-${RAND}_bg.wasm; fi
+
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
