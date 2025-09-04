@@ -16,7 +16,6 @@ jobs:
     env:
       RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
       CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
-      BASE_URL: "https://crafting.bryansmedia.com"
 
     steps:
       - uses: actions/checkout@v4
