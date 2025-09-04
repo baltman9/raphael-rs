@@ -1,6 +1,6 @@
 name: Sync from upstream (main)
 on:
-  schedule: [{ cron: "*/30 * * * *" }]   # every 30 minutes
+  schedule: [{ cron: "0 2 * * *" }]
   workflow_dispatch:
 
 jobs:
