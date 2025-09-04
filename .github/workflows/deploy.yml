@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
+      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
       BASE_URL: "https://crafting.bryansmedia.com"
 
     steps:
@@ -36,17 +37,36 @@ jobs:
       - name: Install trunk
         run: cargo install --locked trunk
 
+      - name: Force target rustflags via .cargo/config.toml
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'EOF'
+          [target.wasm32-unknown-unknown]
+          rustflags = [
+            "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+            "--cfg=web_sys_unstable_apis"
+          ]
+          EOF
+
       - name: Build web (release)
         run: |
           trunk build index.html --release --dist dist
           RAND=$(head -c16 /dev/urandom | md5sum | cut -c1-8)
           if [ -f dist/webworker.js ]; then mv dist/webworker.js dist/webworker-${RAND}.js; fi
           if [ -f dist/webworker_bg.wasm ]; then mv dist/webworker_bg.wasm dist/webworker-${RAND}_bg.wasm; fi
-          # Headers required by WASM threads (SharedArrayBuffer)
+          # Headers required for WASM threads (SharedArrayBuffer)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
             Cross-Origin-Embedder-Policy: require-corp
+
+          /index.html
+            Cache-Control: no-cache
+
+          /*.js
+            Cache-Control: public, max-age=31536000, immutable
+
+          /*.wasm
             Cache-Control: public, max-age=31536000, immutable
           EOF
 
