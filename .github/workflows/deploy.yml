@@ -11,9 +11,10 @@ concurrency:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-        env:
-      RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis
-      BASE_URL: https://crafting.bryansmedia.com
+    env:
+      RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
+      BASE_URL: "https://crafting.bryansmedia.com"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -37,15 +38,12 @@ jobs:
 
       - name: Build web (release)
         run: |
-          trunk build index.html --release --dist distrib
+          trunk build index.html --release --dist dist
           RAND=$(head -c16 /dev/urandom | md5sum | cut -c1-8)
-          if [ -f distrib/webworker.js ]; then mv distrib/webworker.js distrib/webworker-${RAND}.js; fi
-          if [ -f distrib/webworker_bg.wasm ]; then mv distrib/webworker_bg.wasm distrib/webworker-${RAND}_bg.wasm; fi
-
-
-      - name: Add COOP/COEP headers
-        run: |
-          cat > distrib/_headers <<'EOF'
+          if [ -f dist/webworker.js ]; then mv dist/webworker.js dist/webworker-${RAND}.js; fi
+          if [ -f dist/webworker_bg.wasm ]; then mv dist/webworker_bg.wasm dist/webworker-${RAND}_bg.wasm; fi
+          # Headers required by WASM threads (SharedArrayBuffer)
+          cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
             Cross-Origin-Embedder-Policy: require-corp
