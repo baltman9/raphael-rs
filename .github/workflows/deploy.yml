@@ -1,4 +1,5 @@
 name: Build & Deploy (main -> crafting.bryansmedia.com)
+
 on:
   push:
     branches: [ main ]
@@ -12,18 +13,33 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     env:
-      RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
-      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
+      RUSTFLAGS: "--cfg=web_sys_unstable_apis"
       BASE_URL: "https://crafting.bryansmedia.com"
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Use nightly toolchain with wasm target
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2024-08-02
+          targets: wasm32-unknown-unknown
+          components: rust-src
 
-      - name: Add wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+      - name: Configure Cargo for wasm threads
+        run: |
+          mkdir -p .cargo
+          cat > .cargo/config.toml <<'EOF'
+          [target.wasm32-unknown-unknown]
+          rustflags = [
+            "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals"
+          ]
+
+          [unstable]
+          build-std = ["panic_abort", "std"]
+          EOF
+          echo "----- .cargo/config.toml -----"
+          cat .cargo/config.toml
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -37,24 +53,12 @@ jobs:
       - name: Install trunk
         run: cargo install --locked trunk
 
-      - name: Force target rustflags via .cargo/config.toml
-        run: |
-          mkdir -p .cargo
-          cat > .cargo/config.toml <<'EOF'
-          [target.wasm32-unknown-unknown]
-          rustflags = [
-            "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
-            "--cfg=web_sys_unstable_apis"
-          ]
-          EOF
-
       - name: Build web (release)
         run: |
           trunk build index.html --release --dist dist
           RAND=$(head -c16 /dev/urandom | md5sum | cut -c1-8)
           if [ -f dist/webworker.js ]; then mv dist/webworker.js dist/webworker-${RAND}.js; fi
           if [ -f dist/webworker_bg.wasm ]; then mv dist/webworker_bg.wasm dist/webworker-${RAND}_bg.wasm; fi
-          # Headers required for WASM threads (SharedArrayBuffer)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -73,8 +77,8 @@ jobs:
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
-          apiToken: ${{ secrets.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          apiToken:   ${{ secrets.CF_API_TOKEN }}
+          accountId:  ${{ secrets.CF_ACCOUNT_ID }}
           projectName: ff14crafting
-          directory: dist
+          directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
