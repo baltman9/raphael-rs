@@ -4,6 +4,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: pages-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
