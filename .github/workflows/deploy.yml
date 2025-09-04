@@ -89,6 +89,24 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
           EOF
 
+      - name: Debug: verify token from secrets
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+        run: |
+          echo "Verifying token…"
+          curl -fsSL -H "Authorization: Bearer $CF_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify | jq '{success, result: {status, id}}'
+
+      - name: Debug: list Pages projects for this account
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          echo "Account: $CF_ACCOUNT_ID"
+          curl -fsSL -H "Authorization: Bearer $CF_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/pages/projects" \
+            | jq '{success, names: [.result[].name]}'
+
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
