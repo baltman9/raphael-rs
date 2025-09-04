@@ -22,7 +22,7 @@ jobs:
       - name: Use nightly toolchain with wasm target
         uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly-2024-08-02
+          toolchain: nightly
           targets: wasm32-unknown-unknown
           components: rust-src
 
