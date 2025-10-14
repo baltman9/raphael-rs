@@ -69,7 +69,10 @@ fn unsolvable() {
         adversarial: false,
         backload_progress: false,
     };
-    let solver_settings = SolverSettings { simulator_settings };
+    let solver_settings = SolverSettings {
+        simulator_settings,
+        allow_non_max_quality_solutions: true,
+    };
     let expected_score = expect![[r#"
         Err(
             NoSolution,
@@ -81,7 +84,6 @@ fn unsolvable() {
             search_queue_stats: SearchQueueStats {
                 processed_nodes: 0,
                 dropped_nodes: 0,
-                pareto_buckets_squared_size_sum: 0,
             },
             quality_ub_stats: QualityUbSolverStats {
                 parallel_states: 0,
@@ -89,8 +91,7 @@ fn unsolvable() {
                 pareto_values: 0,
             },
             step_lb_stats: StepLbSolverStats {
-                parallel_states: 0,
-                sequential_states: 0,
+                states: 0,
                 pareto_values: 0,
             },
         }
@@ -112,7 +113,10 @@ fn zero_quality() {
         adversarial: false,
         backload_progress: false,
     };
-    let solver_settings = SolverSettings { simulator_settings };
+    let solver_settings = SolverSettings {
+        simulator_settings,
+        allow_non_max_quality_solutions: true,
+    };
     let expected_score = expect![[r#"
         Ok(
             SolutionScore {
@@ -129,7 +133,6 @@ fn zero_quality() {
             search_queue_stats: SearchQueueStats {
                 processed_nodes: 41,
                 dropped_nodes: 12,
-                pareto_buckets_squared_size_sum: 73,
             },
             quality_ub_stats: QualityUbSolverStats {
                 parallel_states: 31147,
@@ -137,8 +140,7 @@ fn zero_quality() {
                 pareto_values: 109398,
             },
             step_lb_stats: StepLbSolverStats {
-                parallel_states: 0,
-                sequential_states: 0,
+                states: 0,
                 pareto_values: 0,
             },
         }
@@ -160,7 +162,10 @@ fn max_quality() {
         adversarial: false,
         backload_progress: false,
     };
-    let solver_settings = SolverSettings { simulator_settings };
+    let solver_settings = SolverSettings {
+        simulator_settings,
+        allow_non_max_quality_solutions: true,
+    };
     let expected_score = expect![[r#"
         Ok(
             SolutionScore {
@@ -173,21 +178,19 @@ fn max_quality() {
     "#]];
     let expected_runtime_stats = expect![[r#"
         MacroSolverStats {
-            finish_states: 245618,
+            finish_states: 239711,
             search_queue_stats: SearchQueueStats {
-                processed_nodes: 5843,
-                dropped_nodes: 68720,
-                pareto_buckets_squared_size_sum: 36691,
+                processed_nodes: 5567,
+                dropped_nodes: 66122,
             },
             quality_ub_stats: QualityUbSolverStats {
                 parallel_states: 389796,
-                sequential_states: 2665,
-                pareto_values: 2988845,
+                sequential_states: 514,
+                pareto_values: 2236380,
             },
             step_lb_stats: StepLbSolverStats {
-                parallel_states: 238904,
-                sequential_states: 0,
-                pareto_values: 1635771,
+                states: 95563,
+                pareto_values: 586735,
             },
         }
     "#]];
@@ -208,7 +211,10 @@ fn large_progress_quality_increase() {
         adversarial: false,
         backload_progress: false,
     };
-    let solver_settings = SolverSettings { simulator_settings };
+    let solver_settings = SolverSettings {
+        simulator_settings,
+        allow_non_max_quality_solutions: true,
+    };
     let expected_score = expect![[r#"
         Ok(
             SolutionScore {
@@ -225,7 +231,6 @@ fn large_progress_quality_increase() {
             search_queue_stats: SearchQueueStats {
                 processed_nodes: 0,
                 dropped_nodes: 23,
-                pareto_buckets_squared_size_sum: 0,
             },
             quality_ub_stats: QualityUbSolverStats {
                 parallel_states: 178982,
@@ -233,9 +238,8 @@ fn large_progress_quality_increase() {
                 pareto_values: 178982,
             },
             step_lb_stats: StepLbSolverStats {
-                parallel_states: 6336,
-                sequential_states: 0,
-                pareto_values: 6336,
+                states: 13,
+                pareto_values: 13,
             },
         }
     "#]];
@@ -256,7 +260,10 @@ fn backload_progress_single_delicate_synthesis() {
         adversarial: false,
         backload_progress: true,
     };
-    let solver_settings = SolverSettings { simulator_settings };
+    let solver_settings = SolverSettings {
+        simulator_settings,
+        allow_non_max_quality_solutions: true,
+    };
     let expected_score = expect![[r#"
         Ok(
             SolutionScore {
@@ -273,17 +280,65 @@ fn backload_progress_single_delicate_synthesis() {
             search_queue_stats: SearchQueueStats {
                 processed_nodes: 0,
                 dropped_nodes: 14,
-                pareto_buckets_squared_size_sum: 0,
             },
             quality_ub_stats: QualityUbSolverStats {
-                parallel_states: 8965,
+                parallel_states: 3243,
                 sequential_states: 0,
-                pareto_values: 8965,
+                pareto_values: 3243,
             },
             step_lb_stats: StepLbSolverStats {
-                parallel_states: 1596,
+                states: 9,
+                pareto_values: 9,
+            },
+        }
+    "#]];
+    test_with_settings(solver_settings, expected_score, expected_runtime_stats);
+}
+
+#[test]
+/// https://github.com/KonaeAkira/raphael-rs/issues/216
+fn issue_216_steplbsolver_crash() {
+    let simulator_settings = Settings {
+        max_cp: 649,
+        max_durability: 40,
+        max_progress: 2125,
+        max_quality: 8600,
+        base_progress: 400,
+        base_quality: 468,
+        job_level: 100,
+        allowed_actions: ActionMask::regular(),
+        adversarial: false,
+        backload_progress: false,
+    };
+    let solver_settings = SolverSettings {
+        simulator_settings,
+        allow_non_max_quality_solutions: true,
+    };
+    let expected_score = expect![[r#"
+        Ok(
+            SolutionScore {
+                capped_quality: 8600,
+                steps: 10,
+                duration: 25,
+                overflow_quality: 596,
+            },
+        )
+    "#]];
+    let expected_runtime_stats = expect![[r#"
+        MacroSolverStats {
+            finish_states: 199538,
+            search_queue_stats: SearchQueueStats {
+                processed_nodes: 19119,
+                dropped_nodes: 350178,
+            },
+            quality_ub_stats: QualityUbSolverStats {
+                parallel_states: 318520,
                 sequential_states: 0,
-                pareto_values: 1596,
+                pareto_values: 1267763,
+            },
+            step_lb_stats: StepLbSolverStats {
+                states: 74728,
+                pareto_values: 330387,
             },
         }
     "#]];

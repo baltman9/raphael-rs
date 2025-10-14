@@ -5,35 +5,39 @@ use egui::{
 use egui_extras::Column;
 use raphael_data::{Consumable, CrafterStats, Locale, find_meals};
 
+use crate::context::AppContext;
+
 use super::{ItemNameLabel, util};
 
 #[derive(Default)]
 struct FoodFinder {}
 
-impl ComputerMut<(&str, Locale), Vec<usize>> for FoodFinder {
-    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<usize> {
-        find_meals(text, locale)
+impl ComputerMut<(&str, Locale), Vec<&'static Consumable>> for FoodFinder {
+    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<&'static Consumable> {
+        find_meals(text, locale).collect::<Vec<_>>()
     }
 }
 
-type FoodSearchCache<'a> = FrameCache<Vec<usize>, FoodFinder>;
+type FoodSearchCache<'a> = FrameCache<Vec<&'static Consumable>, FoodFinder>;
 
 pub struct FoodSelect<'a> {
-    crafter_stats: CrafterStats,
+    crafter_stats: &'a CrafterStats,
     selected_consumable: &'a mut Option<Consumable>,
     locale: Locale,
 }
 
 impl<'a> FoodSelect<'a> {
-    pub fn new(
-        crafter_stats: CrafterStats,
-        selected_consumable: &'a mut Option<Consumable>,
-        locale: Locale,
-    ) -> Self {
-        Self {
-            crafter_stats,
-            selected_consumable,
+    pub fn new(app_context: &'a mut AppContext) -> Self {
+        let AppContext {
             locale,
+            selected_food: selected_consumable,
+            crafter_config,
+            ..
+        } = app_context;
+        Self {
+            crafter_stats: crafter_config.active_stats(),
+            selected_consumable,
+            locale: *locale,
         }
     }
 }
@@ -122,10 +126,10 @@ impl Widget for FoodSelect<'_> {
                     .max_scroll_height(table_height);
                 table.body(|body| {
                     body.rows(line_height, search_result.len(), |mut row| {
-                        let item = raphael_data::MEALS[search_result[row.index()]];
+                        let item = search_result[row.index()];
                         row.col(|ui| {
                             if ui.button("Select").clicked() {
-                                *self.selected_consumable = Some(item);
+                                *self.selected_consumable = Some(*item);
                             }
                         });
                         row.col(|ui| {

@@ -29,7 +29,7 @@ struct DetailedRecipeInfo {
 
 impl DetailedRecipeInfo {
     pub fn from_recipe_id(recipe_id: u32) -> Self {
-        let recipe = RECIPES.get(&recipe_id).unwrap();
+        let recipe = RECIPES.get(recipe_id).unwrap();
         let rlvl_entry = RLVLS[usize::from(recipe.recipe_level)];
         Self {
             recipe_id,
@@ -50,7 +50,7 @@ struct DetailedMissionInfo {
 
 impl DetailedMissionInfo {
     pub fn from_mission_id(mission_id: u32) -> Self {
-        let mission = STELLAR_MISSIONS.get(&mission_id).unwrap();
+        let mission = STELLAR_MISSIONS.get(mission_id).unwrap();
         Self {
             job_id: mission.job_id,
             recipes: mission
@@ -65,10 +65,11 @@ impl DetailedMissionInfo {
 
 #[test]
 fn gathering_miscellany() {
-    let matching_mission_ids = find_stellar_missions("Gathering Miscellany", Locale::EN);
-    assert_eq!(matching_mission_ids.len(), 1);
+    let matching_missions =
+        find_stellar_missions("Gathering Miscellany", Locale::EN).collect::<Vec<_>>();
+    assert_eq!(matching_missions.len(), 1);
 
-    let mission_id = matching_mission_ids[0];
+    let mission_id = matching_missions[0].0;
     let mission_details = DetailedMissionInfo::from_mission_id(mission_id);
     let expected_details = expect![[r#"
         DetailedMissionInfo {
@@ -92,11 +93,11 @@ fn gathering_miscellany() {
 
 #[test]
 fn meteoric_material_test_processing() {
-    let matching_mission_ids =
-        find_stellar_missions("Meteoric Material Test Processing", Locale::EN);
-    assert_eq!(matching_mission_ids.len(), 3); // BSM, ARM, GSM
+    let matching_missions =
+        find_stellar_missions("Meteoric Material Test Processing", Locale::EN).collect::<Vec<_>>();
+    assert_eq!(matching_missions.len(), 3); // BSM, ARM, GSM
 
-    let mission_id = matching_mission_ids[0];
+    let mission_id = matching_missions[0].0;
     let mission_details = DetailedMissionInfo::from_mission_id(mission_id);
     let expected_details = expect![[r#"
         DetailedMissionInfo {
@@ -137,7 +138,7 @@ fn meteoric_material_test_processing() {
     "#]];
     expected_details.assert_debug_eq(&mission_details);
 
-    let mission_id = matching_mission_ids[1];
+    let mission_id = matching_missions[1].0;
     let mission_details = DetailedMissionInfo::from_mission_id(mission_id);
     let expected_details = expect![[r#"
         DetailedMissionInfo {
@@ -178,7 +179,7 @@ fn meteoric_material_test_processing() {
     "#]];
     expected_details.assert_debug_eq(&mission_details);
 
-    let mission_id = matching_mission_ids[2];
+    let mission_id = matching_missions[2].0;
     let mission_details = DetailedMissionInfo::from_mission_id(mission_id);
     let expected_details = expect![[r#"
         DetailedMissionInfo {
@@ -222,11 +223,11 @@ fn meteoric_material_test_processing() {
 
 #[test]
 fn ex_natural_remedy_inspection_ii() {
-    let matching_mission_ids =
-        find_stellar_missions("EX: Natural Remedy Inspection II", Locale::EN);
-    assert_eq!(matching_mission_ids.len(), 1);
+    let matching_missions =
+        find_stellar_missions("EX: Natural Remedy Inspection II", Locale::EN).collect::<Vec<_>>();
+    assert_eq!(matching_missions.len(), 1);
 
-    let mission_id = matching_mission_ids[0];
+    let mission_id = matching_missions[0].0;
     let mission_details = DetailedMissionInfo::from_mission_id(mission_id);
     let expected_details = expect![[r#"
         DetailedMissionInfo {

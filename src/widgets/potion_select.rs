@@ -5,35 +5,39 @@ use egui::{
 use egui_extras::Column;
 use raphael_data::{Consumable, CrafterStats, Locale, find_potions};
 
+use crate::context::AppContext;
+
 use super::{ItemNameLabel, util};
 
 #[derive(Default)]
 struct PotionFinder {}
 
-impl ComputerMut<(&str, Locale), Vec<usize>> for PotionFinder {
-    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<usize> {
-        find_potions(text, locale)
+impl ComputerMut<(&str, Locale), Vec<&'static Consumable>> for PotionFinder {
+    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<&'static Consumable> {
+        find_potions(text, locale).collect::<Vec<_>>()
     }
 }
 
-type PotionSearchCache<'a> = FrameCache<Vec<usize>, PotionFinder>;
+type PotionSearchCache<'a> = FrameCache<Vec<&'static Consumable>, PotionFinder>;
 
 pub struct PotionSelect<'a> {
-    crafter_stats: CrafterStats,
+    crafter_stats: &'a CrafterStats,
     selected_consumable: &'a mut Option<Consumable>,
     locale: Locale,
 }
 
 impl<'a> PotionSelect<'a> {
-    pub fn new(
-        crafter_stats: CrafterStats,
-        selected_consumable: &'a mut Option<Consumable>,
-        locale: Locale,
-    ) -> Self {
-        Self {
-            crafter_stats,
-            selected_consumable,
+    pub fn new(app_context: &'a mut AppContext) -> Self {
+        let AppContext {
             locale,
+            selected_potion: selected_consumable,
+            crafter_config,
+            ..
+        } = app_context;
+        Self {
+            crafter_stats: crafter_config.active_stats(),
+            selected_consumable,
+            locale: *locale,
         }
     }
 }
@@ -126,10 +130,10 @@ impl Widget for PotionSelect<'_> {
 
                 table.body(|body| {
                     body.rows(line_height, search_result.len(), |mut row| {
-                        let item = raphael_data::POTIONS[search_result[row.index()]];
+                        let item = search_result[row.index()];
                         row.col(|ui| {
                             if ui.button("Select").clicked() {
-                                *self.selected_consumable = Some(item);
+                                *self.selected_consumable = Some(*item);
                             }
                         });
                         row.col(|ui| {

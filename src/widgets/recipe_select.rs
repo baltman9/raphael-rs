@@ -8,8 +8,11 @@ use raphael_data::{
     find_stellar_missions, get_game_settings, get_job_name, get_stellar_mission_name,
 };
 
-use crate::config::{
-    CrafterConfig, CustomRecipeOverridesConfiguration, QualitySource, RecipeConfiguration,
+use crate::{
+    config::{
+        CrafterConfig, CustomRecipeOverridesConfiguration, QualitySource, RecipeConfiguration,
+    },
+    context::AppContext,
 };
 
 use super::{ItemNameLabel, util};
@@ -33,24 +36,30 @@ impl std::fmt::Display for RecipeSearchDomain {
 #[derive(Default)]
 struct RecipeFinder {}
 
-impl ComputerMut<(&str, Locale), Vec<u32>> for RecipeFinder {
-    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<u32> {
-        find_recipes(text, locale)
+impl ComputerMut<(&str, Locale), Vec<raphael_data::RecipeSearchEntry>> for RecipeFinder {
+    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<raphael_data::RecipeSearchEntry> {
+        find_recipes(text, locale).collect::<Vec<_>>()
     }
 }
 
-type RecipeSearchCache<'a> = FrameCache<Vec<u32>, RecipeFinder>;
+type RecipeSearchCache<'a> = FrameCache<Vec<raphael_data::RecipeSearchEntry>, RecipeFinder>;
 
 #[derive(Default)]
 struct StellarMissionFinder {}
 
-impl ComputerMut<(&str, Locale), Vec<u32>> for StellarMissionFinder {
-    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<u32> {
-        find_stellar_missions(text, locale)
+impl ComputerMut<(&str, Locale), Vec<raphael_data::StellarMissionSearchEntry>>
+    for StellarMissionFinder
+{
+    fn compute(
+        &mut self,
+        (text, locale): (&str, Locale),
+    ) -> Vec<raphael_data::StellarMissionSearchEntry> {
+        find_stellar_missions(text, locale).collect::<Vec<_>>()
     }
 }
 
-type StellarMissionSearchCache<'a> = FrameCache<Vec<u32>, StellarMissionFinder>;
+type StellarMissionSearchCache<'a> =
+    FrameCache<Vec<raphael_data::StellarMissionSearchEntry>, StellarMissionFinder>;
 
 pub struct RecipeSelect<'a> {
     crafter_config: &'a mut CrafterConfig,
@@ -62,21 +71,24 @@ pub struct RecipeSelect<'a> {
 }
 
 impl<'a> RecipeSelect<'a> {
-    pub fn new(
-        crafter_config: &'a mut CrafterConfig,
-        recipe_config: &'a mut RecipeConfiguration,
-        custom_recipe_overrides_config: &'a mut CustomRecipeOverridesConfiguration,
-        selected_food: Option<Consumable>,
-        selected_potion: Option<Consumable>,
-        locale: Locale,
-    ) -> Self {
-        Self {
-            crafter_config,
+    pub fn new(app_context: &'a mut AppContext) -> Self {
+        let AppContext {
+            locale,
             recipe_config,
             custom_recipe_overrides_config,
             selected_food,
             selected_potion,
-            locale,
+            crafter_config,
+            ..
+        } = app_context;
+
+        Self {
+            crafter_config,
+            recipe_config,
+            custom_recipe_overrides_config,
+            selected_food: *selected_food,
+            selected_potion: *selected_potion,
+            locale: *locale,
         }
     }
 
@@ -122,22 +134,22 @@ impl<'a> RecipeSelect<'a> {
 
         ui.separator();
 
-        let mut search_result = Vec::new();
-        ui.ctx().memory_mut(|mem| match search_domain {
-            RecipeSearchDomain::Recipes => {
-                let search_cache = mem.caches.cache::<RecipeSearchCache<'_>>();
-                search_result = search_cache.get((&search_text, self.locale));
-            }
-            RecipeSearchDomain::StellarMissions => {
-                let search_cache = mem.caches.cache::<StellarMissionSearchCache<'_>>();
-                search_result = search_cache.get((&search_text, self.locale));
-            }
-        });
-
         match search_domain {
-            RecipeSearchDomain::Recipes => self.draw_recipe_select_table(ui, search_result),
+            RecipeSearchDomain::Recipes => {
+                let search_result = ui.ctx().memory_mut(|mem| {
+                    mem.caches
+                        .cache::<RecipeSearchCache<'_>>()
+                        .get((&search_text, self.locale))
+                });
+                self.draw_recipe_select_table(ui, search_result);
+            }
             RecipeSearchDomain::StellarMissions => {
-                self.draw_mission_recipe_select(ui, search_result)
+                let search_result = ui.ctx().memory_mut(|mem| {
+                    mem.caches
+                        .cache::<StellarMissionSearchCache<'_>>()
+                        .get((&search_text, self.locale))
+                });
+                self.draw_mission_recipe_select(ui, search_result);
             }
         }
 
@@ -147,7 +159,11 @@ impl<'a> RecipeSelect<'a> {
         });
     }
 
-    fn draw_recipe_select_table(self, ui: &mut egui::Ui, search_result: Vec<u32>) {
+    fn draw_recipe_select_table(
+        self,
+        ui: &mut egui::Ui,
+        search_result: Vec<raphael_data::RecipeSearchEntry>,
+    ) {
         let line_height = ui.spacing().interact_size.y;
         let line_spacing = ui.spacing().item_spacing.y;
         let table_height = 6.3 * line_height + 6.0 * line_spacing;
@@ -169,13 +185,12 @@ impl<'a> RecipeSelect<'a> {
             .max_scroll_height(table_height);
         table.body(|body| {
             body.rows(line_height, search_result.len(), |mut row| {
-                let recipe_id = search_result[row.index()];
-                let recipe = raphael_data::RECIPES[&recipe_id];
+                let (_recipe_id, recipe) = search_result[row.index()];
                 row.col(|ui| {
                     if ui.button("Select").clicked() {
                         self.crafter_config.selected_job = recipe.job_id;
                         *self.recipe_config = RecipeConfiguration {
-                            recipe,
+                            recipe: *recipe,
                             quality_source: QualitySource::HqMaterialList([0; 6]),
                         }
                     }
@@ -190,13 +205,16 @@ impl<'a> RecipeSelect<'a> {
         });
     }
 
-    fn draw_mission_recipe_select(self, ui: &mut egui::Ui, search_result: Vec<u32>) {
+    fn draw_mission_recipe_select(
+        self,
+        ui: &mut egui::Ui,
+        search_result: Vec<raphael_data::StellarMissionSearchEntry>,
+    ) {
         let line_height = ui.spacing().interact_size.y;
         let line_spacing = ui.spacing().item_spacing.y;
         let table_height = 6.3 * line_height + 6.0 * line_spacing;
 
-        let line_heights = search_result.iter().map(|mission_id| {
-            let mission = &raphael_data::STELLAR_MISSIONS[mission_id];
+        let line_heights = search_result.iter().map(|(_mission_id, mission)| {
             let recipe_count = mission.recipe_ids.len();
             line_height * (1 + recipe_count) as f32 + line_spacing * recipe_count as f32
         });
@@ -215,8 +233,7 @@ impl<'a> RecipeSelect<'a> {
             .max_scroll_height(table_height);
         table.body(|body| {
             body.heterogeneous_rows(line_heights, |mut row| {
-                let mission_id = search_result[row.index()];
-                let mission = &raphael_data::STELLAR_MISSIONS[&mission_id];
+                let (mission_id, mission) = search_result[row.index()];
                 row.col(|ui| {
                     ui.label(get_job_name(mission.job_id, self.locale));
                 });
@@ -224,11 +241,11 @@ impl<'a> RecipeSelect<'a> {
                 row.col(|ui| {
                     let mission_name = get_stellar_mission_name(mission_id, self.locale).unwrap();
                     ui.label(
-                        egui::RichText::new(&mission_name)
+                        egui::RichText::new(mission_name)
                             .color(ui.style().visuals.widgets.inactive.fg_stroke.color),
                     );
                     for (index, recipe_id) in mission.recipe_ids.iter().enumerate() {
-                        let recipe = &raphael_data::RECIPES[recipe_id];
+                        let recipe = &raphael_data::RECIPES[*recipe_id];
                         const DARKENING_COLOR_DARK_MODE: egui::Color32 =
                             egui::Color32::from_black_alpha(25);
                         const DARKENING_COLOR_LIGHT_MODE: egui::Color32 =
@@ -275,7 +292,7 @@ impl<'a> RecipeSelect<'a> {
         let use_base_increase_overrides = self
             .custom_recipe_overrides_config
             .use_base_increase_overrides;
-        ui.label(egui::RichText::new("⚠ Patch 7.31 recipes and items are already included. Only use custom recipes if you are an advanced user or if new recipes haven't been added yet.").small().color(ui.visuals().warn_fg_color));
+        ui.label(egui::RichText::new("⚠ Patch 7.35 recipes and items are already included. Only use custom recipes if you are an advanced user or if new recipes haven't been added yet.").small().color(ui.visuals().warn_fg_color));
         ui.separator();
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
