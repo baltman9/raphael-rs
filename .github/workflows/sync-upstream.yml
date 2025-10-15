@@ -19,7 +19,7 @@ jobs:
       - name: Add upstream & fetch
         run: |
           git remote add upstream https://github.com/KonaeAkira/raphael-rs.git || true
-          git fetch upstream main
+          git fetch upstream main --tags
 
       - name: Configure committer
         run: |
@@ -27,12 +27,26 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Merge upstream/main -> main
+        id: merge
         run: |
+          set -e
           git checkout main
+          BEFORE=$(git rev-parse HEAD)
           git merge --ff-only upstream/main || git merge --no-edit upstream/main
+          AFTER=$(git rev-parse HEAD)
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
+          echo "after=$AFTER"  >> "$GITHUB_OUTPUT"
 
-      - name: Push to origin
+      - name: Push to origin (only if changed)
+        if: steps.merge.outputs.before != steps.merge.outputs.after
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }} main
+
+      - name: Notify deploy (only if changed)
+        if: steps.merge.outputs.before != steps.merge.outputs.after
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: deploy-from-sync
