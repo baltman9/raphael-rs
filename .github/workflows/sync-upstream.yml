@@ -1,10 +1,13 @@
 name: Sync from upstream (main)
+
 on:
-  schedule: [{ cron: "0 2 * * *" }]
+  schedule: [{ cron: "0 2 * * *" }]   # still fine, even though cron is triggered via your pinger
   workflow_dispatch:
 
+# Make sure the token can push and dispatch
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -23,7 +26,7 @@ jobs:
 
       - name: Configure committer
         run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Merge upstream/main -> main
