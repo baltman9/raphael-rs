@@ -174,10 +174,31 @@ jobs:
           set -e
           site="https://crafting.bryansmedia.com/"
           title="Deployed v${{ steps.ver.outputs.version }}"
-          desc="Site: ${site}\nRepo: **${{ github.repository }}**\nCommit: \`${{ github.sha }}\`"
-          payload=$(jq -n --arg t "$title" --arg d "$desc" --arg url "$site" \
-            '{content:"",embeds:[{title:$t,url:$url,description:$d,color:5763719}]}' )
-          curl -sS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
+          repo="${{ github.repository }}"
+          sha="${{ github.sha }}"
+
+          payload=$(jq -n \
+            --arg t "$title" \
+            --arg site "$site" \
+            --arg repo "$repo" \
+            --arg sha "$sha" \
+            '{
+              content: "",
+              embeds: [{
+                title: $t,
+                url: $site,
+                color: 5763719,
+                fields: [
+                  { "name": "Site",   "value": "<\($site)>", "inline": false },
+                  { "name": "Repo",   "value": $repo,        "inline": true  },
+                  { "name": "Commit", "value": "`\($sha)`",  "inline": true  }
+                ]
+              }]
+            }')
+
+          curl -sS -H "Content-Type: application/json" \
+               -d "$payload" \
+               "$DISCORD_WEBHOOK"
 
       # --- Always send a failure message if any step above failed ---
       - name: "Discord: deploy failed"
