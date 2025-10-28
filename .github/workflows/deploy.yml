@@ -26,6 +26,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need HEAD and HEAD~1 for version-change detection
 
       - name: Use nightly toolchain with wasm target
         uses: dtolnay/rust-toolchain@nightly
@@ -135,10 +137,13 @@ jobs:
           set -euo pipefail
           CARGO_FILE="Cargo.toml"
 
+          # Ensure we have at least two commits in this shallow clone
+          git fetch --no-tags --depth=2 origin "${GITHUB_REF_NAME:-main}" || true
+
           prev="${{ github.event.before || '' }}"
           curr="${{ github.sha }}"
           if [ -z "$prev" ]; then
-            prev="$(git rev-parse HEAD~1 || echo '')"
+            prev="$(git rev-parse HEAD~1 2>/dev/null || echo '')"
           fi
 
           changed="false"
