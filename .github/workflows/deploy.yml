@@ -126,3 +126,74 @@ jobs:
           projectName: "ff14crafting"
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- Detect if the root Cargo.toml changed (i.e., version bumped) ---
+      - name: Detect version change in Cargo.toml
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_FILE="Cargo.toml"
+
+          prev="${{ github.event.before || '' }}"
+          curr="${{ github.sha }}"
+          if [ -z "$prev" ]; then
+            prev="$(git rev-parse HEAD~1 || echo '')"
+          fi
+
+          changed="false"
+          if [ -n "$prev" ] && git diff --name-only "$prev" "$curr" | grep -x "$CARGO_FILE" >/dev/null 2>&1; then
+            changed="true"
+          fi
+
+          version="$(
+            awk '
+              /^\[package\]$/ { p=1; next }
+              /^\[/          { p=0 }
+              p && /^version[[:space:]]*=/ {
+                gsub(/"/,"",$3); print $3; exit
+              }
+            ' "$CARGO_FILE"
+          )"
+
+          echo "changed=$changed"  >> "$GITHUB_OUTPUT"
+          echo "version=$version"  >> "$GITHUB_OUTPUT"
+
+      # --- Notify Discord only if version changed and the deploy succeeded ---
+      - name: Discord: deployed new version (embed)
+        if: steps.ver.outputs.changed == 'true' && success()
+        shell: bash
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          set -e
+          site="https://crafting.bryansmedia.com/"
+          title="Deployed v${{ steps.ver.outputs.version }}"
+          desc="Site: ${site}\nRepo: **${{ github.repository }}**\nCommit: \`${{ github.sha }}\`"
+          payload=$(jq -n --arg t "$title" --arg d "$desc" --arg url "$site" '
+            {
+              "content": "",
+              "embeds": [
+                {
+                  "title": $t,
+                  "url": $url,
+                  "description": $d,
+                  "color": 5763719
+                }
+              ]
+            }')
+          curl -sS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
+
+      # --- Always send a failure message if any step above failed ---
+      - name: Discord: deploy failed
+        if: failure()
+        shell: bash
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          set -e
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          msg="❌ Deploy failed for **${{ github.repository }}** on **${{ github.ref_name }}**  \nRun: ${run_url}"
+          curl -sS -H "Content-Type: application/json" \
+            -d "{\"content\":\"${msg}\"}" \
+            "$DISCORD_WEBHOOK"
