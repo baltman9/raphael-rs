@@ -41,6 +41,8 @@ impl ReducedState {
         // This decreases the number of possible states, as now there are only Active/Inactive states for TrainedPerfection instead of the usual Available/Active/Unavailable.
         // This also technically loosens the step-lb, but testing shows that rarely has any impact on the number of pruned nodes.
         effects.set_trained_perfection_available(true);
+        // Same thing for QuickInnovation. Just set it to always available.
+        effects.set_quick_innovation_available(true);
 
         // Make the effects of GreatStrides and WasteNot last forever.
         // This decreases the number of unique states as now each effect only has 2 possible states
@@ -54,6 +56,15 @@ impl ReducedState {
         }
         if effects.waste_not() != 0 {
             effects.set_waste_not(8);
+        }
+
+        // If Innovation and Veneration are both active, set both effects to the same value.
+        // This greatly decreases the number of unique states and in practice does not decrease the lower bound
+        // tightness much.
+        if effects.innovation() != 0 && effects.veneration() != 0 {
+            let innovation_veneration = std::cmp::max(effects.innovation(), effects.veneration());
+            effects.set_innovation(innovation_veneration);
+            effects.set_veneration(innovation_veneration);
         }
 
         // Clamp all effects down to the steps budget to reduce the number of unique states.

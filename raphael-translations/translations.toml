@@ -4,6 +4,7 @@ en = '''EXAMPLE \u{e100}''' # filled from Rust source when `update-toml` feature
 de = '''EXAMPLE_DE \u{e100}''' # contents must be a valid Rust string literal
 fr = '''EXAMPLE_FR \u{e100}'''
 ja = '''EXAMPLE_JA \u{e100}'''
+chs = '''EXAMPLE_CHS \u{e100}'''
 ko = '''EXAMPLE_KO \u{e100}'''
 version = "0.0.0" # only written when `update-toml` feature is used
 appearances = [] # only written when `update-toml` feature is used, additionally setting `RAPHAEL_TRANSLATIONS_RESET_APPEARANCES` resets them
@@ -415,39 +416,9 @@ version = "0.1.0"
 appearances = ["src/config.rs:130:56", "src/widgets/recipe_select.rs:497:69"]
 
 ["u8MNP8lLoB18+dt06cfdzQ=="]
-en = '''The format can be any arbitrary text or FFXIV command.
-
-The following placeholders can be used to output their respective value:
-  - {index} : the index or number of the macro block
-  - {max_index} : the maximum index or number of macro blocks
-  - {item_name} : the name of the selected recipe's item result
-  - {food} : the name of the selected food
-  - {potion} : the name of the selected potion
-  - {craftsmanship} : the base craftsmanship stat
-  - {control} : the base control stat
-  - {cp} : the base CP stat'''
-ja = '''形式は任意のテキストまたはFFXIVコマンドを使用できます。
-
-以下のプレースホルダーで各値を出力できます：
-  - {index} : マクロブロックの番号
-  - {max_index} : マクロブロックの最大番号
-  - {item_name} : 選択したレシピのアイテム名
-  - {food} : 選択した調理品の名前
-  - {potion} : 選択した薬品の名前
-  - {craftsmanship} : 基本作業精度ステータス
-  - {control} : 基本加工精度ステータス
-  - {cp} : 基本CP'''
-de = '''Das Format kann jeglicher Text oder FFXIV Kommando sein.
-
-  Die folgenden Variablen können genutzt werden um ihre jeweiligen Werte auszugeben
-   - {index} : Der Index (/ die Nummer) des Macroblocks
-   - {max_index} : Der maximale Index des Macroblocks
-   - {item_name} : Der Name des Gegenstandes, welcher mit dem derzeitig ausgewählten Rezept hergestellt wird
-   - {food} : Name des derzeitig ausgewählten Gerichts
-   - {potion} : Name der derzeitig ausgewählten Arznei
-   - {craftsmanship} : Unmodifiziertes Kunstfertigkeits Attribut
-   - {control} : Unmodifiertes Kontrolle Attribut
-   - {cp} : Unmodifiziertes HP Attribut'''
+en = '''The format can be any arbitrary text or FFXIV command.\n\nThe following placeholders can be used to output their respective value:\n  - {index} : the index or number of the macro block\n  - {max_index} : the maximum index or number of macro blocks\n  - {item_name} : the name of the selected recipe's item result\n  - {food} : the name of the selected food\n  - {potion} : the name of the selected potion\n  - {craftsmanship} : the base craftsmanship stat\n  - {control} : the base control stat\n  - {cp} : the base CP stat'''
+ja = '''形式は任意のテキストまたはFFXIVコマンドを使用できます。\n\n以下のプレースホルダーで各値を出力できます：\n  - {index} : マクロブロックの番号\n  - {max_index} : マクロブロックの最大番号\n  - {item_name} : 選択したレシピのアイテム名\n  - {food} : 選択した調理品の名前\n  - {potion} : 選択した薬品の名前\n  - {craftsmanship} : 基本作業精度ステータス\n  - {control} : 基本加工精度ステータス\n  - {cp} : 基本CP'''
+de = '''Das Format kann jeglicher Text oder FFXIV Kommando sein.\n\nDie folgenden Variablen können genutzt werden um ihre jeweiligen Werte auszugeben\n   - {index} : Der Index (/ die Nummer) des Macroblocks\n   - {max_index} : Der maximale Index des Macroblocks\n   - {item_name} : Der Name des Gegenstandes, welcher mit dem derzeitig ausgewählten Rezept hergestellt wird\n   - {food} : Name des derzeitig ausgewählten Gerichts\n   - {potion} : Name der derzeitig ausgewählten Arznei\n   - {craftsmanship} : Unmodifiziertes Kunstfertigkeits Attribut\n   - {control} : Unmodifiertes Kontrolle Attribut\n   - {cp} : Unmodifiziertes HP Attribut'''
 version = "0.1.0"
 appearances = ["src/widgets/macro_view.rs:13:9"]
 
@@ -456,7 +427,7 @@ en = '''Unknown item'''
 ja = '''不明なアイテム'''
 de = '''Unbekannter Gegenstand'''
 version = "0.1.0"
-appearances = ["src/widgets/macro_view.rs:121:31", "src/widgets/macro_view.rs:132:39", "src/widgets/item_name_label.rs:15:39", "src/widgets/saved_rotations.rs:108:35", "src/widgets/saved_rotations.rs:470:39", "src/widgets/saved_rotations.rs:509:43"]
+appearances = ["src/widgets/macro_view.rs:121:31", "src/widgets/macro_view.rs:132:39", "src/widgets/game_data_name_label.rs:63:73", "src/widgets/game_data_name_label.rs:66:39", "src/widgets/saved_rotations.rs:108:35", "src/widgets/saved_rotations.rs:470:39", "src/widgets/saved_rotations.rs:509:43"]
 
 ["vXv1yeY8kh1x9KtxDRdJ8w=="]
 en = '''Use default notification'''
@@ -808,19 +779,26 @@ de = '''📋 Konfiguration hier einfügen, um diese zu laden'''
 version = "0.1.0"
 appearances = ["src/widgets/stats_edit.rs:85:47"]
 
+["ZfKRHRnNdTtPwtYCRVWryg=="]
+en = '''Unknown mission'''
+ja = '''不明なミッション'''
+de = '''Unbekannte Mission'''
+version = "0.1.0"
+appearances = ["src/widgets/game_data_name_label.rs:68:39"]
+
 ["B7aDbFVnrJ640ZuDhMNUaQ=="]
 en = '''Copy item name'''
 ja = '''アイテム名をコピー'''
 de = '''Gegenstandsnamen kopieren'''
 version = "0.1.0"
-appearances = ["src/widgets/item_name_label.rs:42:37"]
+appearances = ["src/widgets/game_data_name_label.rs:99:81"]
 
-["jPqS6hOpY1D5ul3Z6feibg=="]
-en = '''Copy item ID'''
-ja = '''アイテムIDをコピー'''
-de = '''Gegenstands-ID kopieren'''
+["BRKQIjx0bt8q3+KAeg6h0w=="]
+en = '''Copy mission name'''
+ja = '''ミッション名をコピー'''
+de = '''Missionsnamen kopieren'''
 version = "0.1.0"
-appearances = ["src/widgets/item_name_label.rs:52:37"]
+appearances = ["src/widgets/game_data_name_label.rs:100:54"]
 
 ["IOs59+lNVa5aqq42jPjgmA=="]
 en = '''Load rotation'''

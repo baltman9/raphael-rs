@@ -82,17 +82,18 @@ fn unsolvable() {
         MacroSolverStats {
             finish_states: 2864,
             search_queue_stats: SearchQueueStats {
+                inserted_nodes: 0,
                 processed_nodes: 0,
-                dropped_nodes: 0,
             },
             quality_ub_stats: QualityUbSolverStats {
-                parallel_states: 0,
-                sequential_states: 0,
-                pareto_values: 0,
+                states_on_main: 0,
+                states_on_shards: 0,
+                values: 0,
             },
             step_lb_stats: StepLbSolverStats {
-                states: 0,
-                pareto_values: 0,
+                states_on_main: 0,
+                states_on_shards: 0,
+                values: 0,
             },
         }
     "#]];
@@ -131,17 +132,18 @@ fn zero_quality() {
         MacroSolverStats {
             finish_states: 1660,
             search_queue_stats: SearchQueueStats {
-                processed_nodes: 41,
-                dropped_nodes: 12,
+                inserted_nodes: 64,
+                processed_nodes: 42,
             },
             quality_ub_stats: QualityUbSolverStats {
-                parallel_states: 31147,
-                sequential_states: 0,
-                pareto_values: 109398,
+                states_on_main: 31147,
+                states_on_shards: 0,
+                values: 109398,
             },
             step_lb_stats: StepLbSolverStats {
-                states: 0,
-                pareto_values: 0,
+                states_on_main: 26538,
+                states_on_shards: 0,
+                values: 194222,
             },
         }
     "#]];
@@ -178,19 +180,20 @@ fn max_quality() {
     "#]];
     let expected_runtime_stats = expect![[r#"
         MacroSolverStats {
-            finish_states: 239711,
+            finish_states: 251317,
             search_queue_stats: SearchQueueStats {
-                processed_nodes: 5567,
-                dropped_nodes: 66122,
+                inserted_nodes: 97351,
+                processed_nodes: 6915,
             },
             quality_ub_stats: QualityUbSolverStats {
-                parallel_states: 389796,
-                sequential_states: 514,
-                pareto_values: 2236380,
+                states_on_main: 389796,
+                states_on_shards: 514,
+                values: 2236380,
             },
             step_lb_stats: StepLbSolverStats {
-                states: 95563,
-                pareto_values: 586735,
+                states_on_main: 26538,
+                states_on_shards: 50910,
+                values: 486877,
             },
         }
     "#]];
@@ -229,17 +232,18 @@ fn large_progress_quality_increase() {
         MacroSolverStats {
             finish_states: 24,
             search_queue_stats: SearchQueueStats {
-                processed_nodes: 0,
-                dropped_nodes: 23,
+                inserted_nodes: 1,
+                processed_nodes: 1,
             },
             quality_ub_stats: QualityUbSolverStats {
-                parallel_states: 178982,
-                sequential_states: 0,
-                pareto_values: 178982,
+                states_on_main: 178982,
+                states_on_shards: 0,
+                values: 178982,
             },
             step_lb_stats: StepLbSolverStats {
-                states: 13,
-                pareto_values: 13,
+                states_on_main: 1,
+                states_on_shards: 12,
+                values: 13,
             },
         }
     "#]];
@@ -278,17 +282,18 @@ fn backload_progress_single_delicate_synthesis() {
         MacroSolverStats {
             finish_states: 15,
             search_queue_stats: SearchQueueStats {
-                processed_nodes: 0,
-                dropped_nodes: 14,
+                inserted_nodes: 1,
+                processed_nodes: 1,
             },
             quality_ub_stats: QualityUbSolverStats {
-                parallel_states: 3243,
-                sequential_states: 0,
-                pareto_values: 3243,
+                states_on_main: 3243,
+                states_on_shards: 0,
+                values: 3243,
             },
             step_lb_stats: StepLbSolverStats {
-                states: 9,
-                pareto_values: 9,
+                states_on_main: 1,
+                states_on_shards: 9,
+                values: 10,
             },
         }
     "#]];
@@ -326,19 +331,20 @@ fn issue_216_steplbsolver_crash() {
     "#]];
     let expected_runtime_stats = expect![[r#"
         MacroSolverStats {
-            finish_states: 199538,
+            finish_states: 221234,
             search_queue_stats: SearchQueueStats {
-                processed_nodes: 19119,
-                dropped_nodes: 350178,
+                inserted_nodes: 436353,
+                processed_nodes: 21746,
             },
             quality_ub_stats: QualityUbSolverStats {
-                parallel_states: 318520,
-                sequential_states: 0,
-                pareto_values: 1267763,
+                states_on_main: 318520,
+                states_on_shards: 0,
+                values: 1267763,
             },
             step_lb_stats: StepLbSolverStats {
-                states: 74728,
-                pareto_values: 330387,
+                states_on_main: 36739,
+                states_on_shards: 29009,
+                values: 289165,
             },
         }
     "#]];
