@@ -161,7 +161,7 @@ jobs:
 
       # --- Notify Discord only if version changed and the deploy succeeded ---
       - name: Discord: deployed new version (embed)
-        if: steps.ver.outputs.changed == 'true' && success()
+        if: ${{ steps.ver.outputs.changed == 'true' && success() }}
         shell: bash
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
@@ -170,23 +170,13 @@ jobs:
           site="https://crafting.bryansmedia.com/"
           title="Deployed v${{ steps.ver.outputs.version }}"
           desc="Site: ${site}\nRepo: **${{ github.repository }}**\nCommit: \`${{ github.sha }}\`"
-          payload=$(jq -n --arg t "$title" --arg d "$desc" --arg url "$site" '
-            {
-              "content": "",
-              "embeds": [
-                {
-                  "title": $t,
-                  "url": $url,
-                  "description": $d,
-                  "color": 5763719
-                }
-              ]
-            }')
+          payload=$(jq -n --arg t "$title" --arg d "$desc" --arg url "$site" \
+            '{content:"",embeds:[{title:$t,url:$url,description:$d,color:5763719}]}' )
           curl -sS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
 
       # --- Always send a failure message if any step above failed ---
       - name: Discord: deploy failed
-        if: failure()
+        if: ${{ failure() }}
         shell: bash
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
@@ -194,6 +184,5 @@ jobs:
           set -e
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           msg="❌ Deploy failed for **${{ github.repository }}** on **${{ github.ref_name }}**  \nRun: ${run_url}"
-          curl -sS -H "Content-Type: application/json" \
-            -d "{\"content\":\"${msg}\"}" \
-            "$DISCORD_WEBHOOK"
+          curl -sS -H "Content-Type: application/json" -d "{\"content\":\"${msg}\"}" "$DISCORD_WEBHOOK"
+
