@@ -5,8 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: write   # applies only to GITHUB_TOKEN – OK to keep
 
 jobs:
   sync:
@@ -17,10 +16,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
       - name: Add upstream & fetch
         run: |
           git remote add upstream https://github.com/KonaeAkira/raphael-rs.git || true
           git fetch upstream main --tags
+
       - name: Configure committer
         run: |
           git config user.name  "github-actions[bot]"
@@ -37,13 +38,24 @@ jobs:
           echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
           echo "after=$AFTER"  >> "$GITHUB_OUTPUT"
 
+      # OPTIONAL but helpful: ignore upstream workflow changes so future pushes don't get blocked
+      - name: Keep our workflows (ignore upstream workflow changes)
+        run: |
+          set -e
+          if git diff --name-only | grep -q '^\.github/workflows/'; then
+            git checkout --ours .github/workflows || true
+            git add .github/workflows || true
+            git commit -m "Keep fork workflow files" || true
+          fi
+
       - name: Push to origin (only if changed)
         if: steps.merge.outputs.before != steps.merge.outputs.after
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
-          git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }} main
+          git push https://baltman9:${PUSH_TOKEN}@github.com/${{ github.repository }} main
 
+      # If you use repository_dispatch in deploy, keep this:
       - name: Notify deploy (only if changed)
         if: steps.merge.outputs.before != steps.merge.outputs.after
         uses: peter-evans/repository-dispatch@v3
