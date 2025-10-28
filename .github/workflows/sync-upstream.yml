@@ -1,13 +1,13 @@
 name: Sync from upstream (main)
 
 on:
-  schedule: [{ cron: "0 2 * * *" }]   # still fine, even though cron is triggered via your pinger
+  schedule: [{ cron: "0 2 * * *" }]
   workflow_dispatch:
 
-# Make sure the token can push and dispatch
 permissions:
   contents: write
   actions: write
+  workflows: write     # <-- add this
 
 jobs:
   sync:
@@ -18,12 +18,10 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-
       - name: Add upstream & fetch
         run: |
           git remote add upstream https://github.com/KonaeAkira/raphael-rs.git || true
           git fetch upstream main --tags
-
       - name: Configure committer
         run: |
           git config user.name  "github-actions[bot]"
