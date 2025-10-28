@@ -160,7 +160,7 @@ jobs:
           echo "version=$version"  >> "$GITHUB_OUTPUT"
 
       # --- Notify Discord only if version changed and the deploy succeeded ---
-      - name: Discord: deployed new version (embed)
+      - name: "Discord: deployed new version (embed)"
         if: ${{ steps.ver.outputs.changed == 'true' && success() }}
         shell: bash
         env:
@@ -175,7 +175,7 @@ jobs:
           curl -sS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
 
       # --- Always send a failure message if any step above failed ---
-      - name: Discord: deploy failed
+      - name: "Discord: deploy failed"
         if: ${{ failure() }}
         shell: bash
         env:
@@ -185,4 +185,3 @@ jobs:
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           msg="❌ Deploy failed for **${{ github.repository }}** on **${{ github.ref_name }}**  \nRun: ${run_url}"
           curl -sS -H "Content-Type: application/json" -d "{\"content\":\"${msg}\"}" "$DISCORD_WEBHOOK"
-
