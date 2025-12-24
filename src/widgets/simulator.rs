@@ -93,12 +93,13 @@ impl Simulator<'_> {
 
                 let max_text_width = max_text_width(
                     ui,
-                    &[
+                    [
                         t!(locale, "Progress"),
                         t!(locale, "Quality"),
                         t!(locale, "Durability"),
                         t!(locale, "CP"),
                     ],
+                    egui::TextStyle::Body,
                 );
 
                 let text_size = egui::vec2(max_text_width, ui.spacing().interact_size.y);
