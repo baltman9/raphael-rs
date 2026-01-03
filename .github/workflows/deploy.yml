@@ -75,7 +75,7 @@ jobs:
           set -euo pipefail
           cargo +nightly build \
             -Z build-std=std,panic_abort \
-            -Z build-std-features=panic_immediate_abort,threads \
+            -Z build-std-features=panic_immediate_abort \
             --target wasm32-unknown-unknown \
             --release
 
