@@ -74,8 +74,11 @@ jobs:
                      -C link-arg=--shared-memory \
                      -C link-arg=--import-memory \
                      -C link-arg=--max-memory=4294967296" \
-          cargo +nightly build -Z build-std=std,panic_abort \
-            --target wasm32-unknown-unknown --release
+          cargo +nightly build \ 
+            -Z build-std=std,panic_abort \
+            -Z build-std-features=panic_immediate_abort,threads \
+            --target wasm32-unknown-unknown \ 
+            --release
         env:
           # Ensure the inline RUSTFLAGS above are the ones that take effect.
           RUSTFLAGS: ""
