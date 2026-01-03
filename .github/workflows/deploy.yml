@@ -19,12 +19,13 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
-    # Compile-time env for env!("BASE_URL")
+    # Compile-time env for env!("BASE_URL") in your Rust code
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
@@ -39,6 +40,7 @@ jobs:
         run: |
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
+          # Only affect the wasm target; host tools build normally.
           [target.wasm32-unknown-unknown]
           rustflags = [
             "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
@@ -60,11 +62,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install trunk & wasm-bindgen
-              run: |
-                cargo install --locked trunk
-                cargo install -f wasm-bindgen-cli --version 0.2.92
+        run: |
+          cargo install --locked trunk
+          cargo install -f wasm-bindgen-cli --version 0.2.106
+          wasm-bindgen -V
 
-          - name: Build wasm (threaded std)
+      # Build the wasm with nightly and build-std so shared memory works
+      - name: Build wasm (threaded std)
         run: |
           RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
                      -C link-arg=--shared-memory \
@@ -73,11 +77,12 @@ jobs:
           cargo +nightly build -Z build-std=std,panic_abort \
             --target wasm32-unknown-unknown --release
         env:
-          RUSTFLAGS: ""   # ensure the inline RUSTFLAGS above take effect cleanly
+          # Ensure the inline RUSTFLAGS above are the ones that take effect.
+          RUSTFLAGS: ""
 
-      # Locate the produced .wasm (dash vs underscore, etc.)
       - name: Locate wasm artifact
         id: wasm
+        shell: bash
         run: |
           set -euo pipefail
           echo "Listing wasm artifacts:"
@@ -90,11 +95,8 @@ jobs:
           echo "Found wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
-      # Run wasm-bindgen (no --enable-threads flag on 0.2.106)
       - name: Generate wasm-bindgen (threaded)
         run: |
-          cargo install -f wasm-bindgen-cli --version 0.2.106
-          wasm-bindgen -V
           mkdir -p dist_wbg
           wasm-bindgen \
             --target web \
@@ -103,7 +105,6 @@ jobs:
             --out-name raphael-xiv \
             "${{ steps.wasm.outputs.path }}"
 
-      # 3) Build static site (HTML/assets) with Trunk into a temp dir, then swap in threaded glue
       - name: Build HTML/assets with Trunk (no wasm overrides yet)
         run: |
           trunk build index.html --release --dist dist_trunk
@@ -114,18 +115,13 @@ jobs:
           set -euo pipefail
           # Start from Trunk’s output
           rsync -a dist_trunk/ dist/
-
           # Copy in the threaded glue from wasm-bindgen
           cp -f dist_wbg/raphael-xiv.js dist/
           cp -f dist_wbg/raphael-xiv_bg.wasm dist/
-
-          # Patch index.html to reference our stable threaded glue name
-          # Replace any hashed raphael-xiv-*.js with raphael-xiv.js
-          sed -i -E 's#raphael-xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html
-          # Also fix any _bg.wasm hashed reference (if present)
-          sed -i -E 's#raphael-xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html
-
-          # Security & caching headers for CF Pages
+          # Patch index.html to reference stable names
+          sed -i -E 's#raphael-xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
+          sed -i -E 's#raphael-xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
+          # Security & caching headers for Cloudflare Pages
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -175,7 +171,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Detect version change to announce on Discord ---
+      # --- Detect version change in Cargo.toml (root) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
