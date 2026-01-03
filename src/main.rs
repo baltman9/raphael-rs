@@ -2,26 +2,26 @@
 // This attribute is ignored for all other platforms
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
-#![cfg_attr(target_arch = "wasm32", feature(thread_local))] // <-- add this
 
-/* --- TLS anchor so rustc emits __wasm_init_tls (required for wasm threads) --- */
+// --- TLS anchor so rustc emits __wasm_init_tls (required for wasm threads) ---
 #[cfg(target_arch = "wasm32")]
-#[thread_local]
+#[link_section = ".tdata"]
+#[used]
 static mut __TLS_ANCHOR: u8 = 0;
 
 #[cfg(target_arch = "wasm32")]
-#[unsafe(no_mangle)]               // <-- nightly requires the unsafe() form
+#[no_mangle]
 #[inline(never)]
 pub extern "C" fn __touch_tls_anchor() {
-    // Volatile write ensures a real use so it can't be optimized away.
+    // Volatile write via RAW pointer (no &mut to a mutable static!)
     let p = core::ptr::addr_of_mut!(__TLS_ANCHOR);
-    unsafe { core::ptr::write_volatile(&mut __TLS_ANCHOR, 1) };
+    unsafe { core::ptr::write_volatile(p, 1u8) };
 }
 
 #[cfg(target_arch = "wasm32")]
 #[used]
 static __KEEP_TLS_FN: extern "C" fn() = __touch_tls_anchor;
-/* --------------------------------------------------------------------------- */
+// ---------------------------------------------------------------------------
 
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 fn init_logging() {
@@ -51,7 +51,7 @@ fn init_logging() {
 
 #[cfg(target_arch = "wasm32")]
 fn init_logging() {
-    // Redirect `log` message to `console.log` and friends:
+    // Redirect `log` messages to the browser console:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 }
 
