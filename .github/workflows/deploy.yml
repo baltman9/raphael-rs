@@ -82,7 +82,6 @@ jobs:
             --no-typescript \
             --out-dir dist_wbg \
             --out-name raphael-xiv \
-            --enable-threads \
             target/wasm32-unknown-unknown/release/raphael_xiv.wasm
 
       # 3) Build static site (HTML/assets) with Trunk into a temp dir, then swap in threaded glue
