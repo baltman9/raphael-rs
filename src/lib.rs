@@ -1,13 +1,12 @@
-// Export `init_thread_pool` only when we're on wasm32 *and* the `wasm_threads`
-// feature is enabled.
+// Export the real init when on wasm32 *and* threads feature is enabled.
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 pub use wasm_bindgen_rayon::init_thread_pool;
 
-// When building for wasm32 without threads, provide a no-op with the same
-// signature so call sites can remain unconditional.
+// When on wasm32 but WITHOUT threads, provide a no-op Promise so call sites don't change.
 #[cfg(all(target_arch = "wasm32", not(feature = "wasm_threads")))]
-pub async fn init_thread_pool(_pool_size: Option<usize>) -> Result<(), wasm_bindgen::JsValue> {
-    Ok(())
+pub fn init_thread_pool(_pool_size: Option<usize>) -> js_sys::Promise {
+    // Immediately-resolving Promise (matches wasm_bindgen_rayon signature)
+    js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)
 }
 
 mod app;
