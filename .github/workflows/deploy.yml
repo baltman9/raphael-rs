@@ -4,6 +4,13 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      wasm_threads:
+        description: "Build with WebAssembly threads"
+        type: choice
+        required: false
+        options: ["0","1"]
+        default: "0"
   repository_dispatch:
     types: [deploy-from-sync]
   workflow_run:
@@ -19,9 +26,10 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
-    # Compile-time env for env!("BASE_URL") in your Rust code
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
+      # Opt-in toggle (default off). You can also set a repo/env var named WASM_THREADS=1.
+      WASM_THREADS: ${{ inputs.wasm_threads || env.WASM_THREADS || '0' }}
 
     steps:
       - name: Checkout
@@ -36,17 +44,18 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
 
+      # Only write .cargo/config when doing a THREADED build
       - name: Configure Cargo for wasm threads (target-scoped flags)
+        if: ${{ env.WASM_THREADS == '1' }}
         run: |
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
-          # Only affect the wasm target; host tools build normally.
           [target.wasm32-unknown-unknown]
           rustflags = [
-            "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
-            "-C", "link-arg=--shared-memory",
-            "-C", "link-arg=--import-memory",
-            "-C", "link-arg=--max-memory=4294967296",
+            "-C","target-feature=+atomics,+bulk-memory,+mutable-globals",
+            "-C","link-arg=--shared-memory",
+            "-C","link-arg=--import-memory",
+            "-C","link-arg=--max-memory=4294967296",
           ]
           EOF
           echo "----- .cargo/config.toml -----"
@@ -67,25 +76,35 @@ jobs:
           cargo install -f wasm-bindgen-cli --version 0.2.106
           wasm-bindgen -V
 
-      # Build the wasm with nightly + build-std so shared memory works
-      - name: Build wasm (threaded std)
-        env:
-          RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296
+      # ---------- BUILD ----------
+      # Non-threaded build (default)
+      - name: Build wasm (NON-threaded)
+        if: ${{ env.WASM_THREADS != '1' }}
         run: |
           set -euo pipefail
+          # No atomics/shared-memory flags here
+          cargo +nightly build --target wasm32-unknown-unknown --release
+
+      # Threaded build (opt-in)
+      - name: Build wasm (THREADED)
+        if: ${{ env.WASM_THREADS == '1' }}
+        run: |
+          set -euo pipefail
+          # Build std for wasm and enable your gated feature
           cargo +nightly build \
             -Z build-std=std,panic_abort \
+            --features wasm_threads \
             --target wasm32-unknown-unknown \
             --release
 
+      # Locate the produced wasm (handles hyphen/underscore naming)
       - name: Locate wasm artifact
         id: wasm
         shell: bash
         run: |
           set -euo pipefail
-          echo "Listing wasm artifacts:"
           ls -lah target/wasm32-unknown-unknown/release || true
-          WASM_PATH=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -n1)
+          WASM_PATH=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
           if [ -z "${WASM_PATH:-}" ]; then
             echo "No .wasm produced under target/wasm32-unknown-unknown/release"
             exit 1
@@ -93,9 +112,12 @@ jobs:
           echo "Found wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
-      # wasm-bindgen 0.2.106 (no --enable-threads here). Requires __wasm_init_tls export (see TLS shim).
-      - name: Generate wasm-bindgen (threaded)
+      # ---------- wasm-bindgen ----------
+      # Non-threaded glue (default)
+      - name: Generate wasm-bindgen (NON-threaded)
+        if: ${{ env.WASM_THREADS != '1' }}
         run: |
+          set -euo pipefail
           mkdir -p dist_wbg
           wasm-bindgen \
             --target web \
@@ -104,23 +126,34 @@ jobs:
             --out-name raphael-xiv \
             "${{ steps.wasm.outputs.path }}"
 
+      # Threaded glue (opt-in)
+      - name: Generate wasm-bindgen (THREADED)
+        if: ${{ env.WASM_THREADS == '1' }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist_wbg
+          # wasm-bindgen 0.2.106 detects shared memory automatically; no --enable-threads flag
+          wasm-bindgen \
+            --target web \
+            --no-typescript \
+            --out-dir dist_wbg \
+            --out-name raphael-xiv \
+            "${{ steps.wasm.outputs.path }}"
+
+      # ---------- Static site with Trunk ----------
       - name: Build HTML/assets with Trunk (no wasm overrides yet)
         run: |
           trunk build index.html --release --dist dist_trunk
 
-      - name: Assemble final dist (threaded wasm + patched index.html)
+      - name: Assemble final dist (wbg output + patched index.html)
         shell: bash
         run: |
           set -euo pipefail
-          # Start from Trunk’s output
           rsync -a dist_trunk/ dist/
-          # Copy in the threaded glue from wasm-bindgen
           cp -f dist_wbg/raphael-xiv.js dist/
           cp -f dist_wbg/raphael-xiv_bg.wasm dist/
-          # Patch index.html to reference stable names
           sed -i -E 's#raphael-xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
           sed -i -E 's#raphael-xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
-          # Security & caching headers for Cloudflare Pages
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -144,7 +177,6 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
           set -euo pipefail
-          echo "Verifying token..."
           curl -fsSL -H "Authorization: Bearer ${CF_API_TOKEN}" \
             "https://api.cloudflare.com/client/v4/user/tokens/verify" \
             | jq '{success, result: {status, id}}'
@@ -170,7 +202,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Detect version change in Cargo.toml (root) ---
+      # --- Notify on version bump ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
@@ -234,7 +266,7 @@ jobs:
         if: ${{ failure() }}
         shell: bash
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DIRECT_WEBHOOK || secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           set -e
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
