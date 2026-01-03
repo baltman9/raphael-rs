@@ -76,12 +76,14 @@ eframe = { version = "0.33.2", default-features = false, features = [
 wgpu = "27"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# ⬇️ make rayon glue optional so non-threaded builds don’t try to compile it
-wasm-bindgen-rayon = { version = "1.3", features = ["no-bundler"], optional = true }
+wasm-bindgen-rayon = { version = "1.3", features = ["no-bundler"] }
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1.7"
 web-sys = "0.3"
 eframe = { version = "0.33.2", features = ["persistence"] }
+# Added for the no-threads stub:
+js-sys = "0.3"
+wasm-bindgen = "0.2"
 
 [profile.release]
 opt-level = 3
@@ -109,5 +111,4 @@ overflow-checks = true
 [features]
 dev-panel = []
 default = []
-# ⬇️ enable the optional dependency only when you pass `--features wasm_threads`
-wasm_threads = ["dep:wasm-bindgen-rayon"]
+wasm_threads = []
