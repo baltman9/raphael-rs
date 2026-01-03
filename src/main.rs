@@ -2,26 +2,12 @@
 // This attribute is ignored for all other platforms
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
-#![cfg_attr(target_arch = "wasm32", feature(unsafe_attributes))] // for #[unsafe(...)] attrs on nightly
+#![cfg_attr(target_arch = "wasm32", feature(thread_local))] // nightly for #[thread_local]
 
-// --- TLS anchor so rustc emits __wasm_init_tls (required for wasm threads) ---
+// --- Force TLS so rustc emits __wasm_init_tls (required for wasm threads) ---
 #[cfg(target_arch = "wasm32")]
-#[unsafe(link_section = ".tdata")]
-#[used]
-static mut __TLS_ANCHOR: u8 = 0;
-
-#[cfg(target_arch = "wasm32")]
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub extern "C" fn __touch_tls_anchor() {
-    // Volatile write via RAW pointer (no &mut to a mutable static!)
-    let p = core::ptr::addr_of_mut!(__TLS_ANCHOR);
-    unsafe { core::ptr::write_volatile(p, 1u8) };
-}
-
-#[cfg(target_arch = "wasm32")]
-#[used]
-static __KEEP_TLS_FN: extern "C" fn() = __touch_tls_anchor;
+#[thread_local]
+static mut TLS_ANCHOR: u8 = 0;
 // ---------------------------------------------------------------------------
 
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
@@ -29,8 +15,7 @@ fn init_logging() {
     // Ensure app storage folder exists
     let mut file_path = eframe::storage_dir("Raphael XIV").unwrap();
     if !std::fs::exists(&file_path).unwrap() {
-        let creation_result = std::fs::create_dir_all(&file_path);
-        assert!(creation_result.is_ok());
+        std::fs::create_dir_all(&file_path).unwrap();
     }
 
     // Get log file target. File is truncated if it already exists
@@ -44,7 +29,6 @@ fn init_logging() {
         .init();
 
     // Ensure panics are logged when detached, since the default hook outputs to stderr
-    // Backtraces are currently not generated
     std::panic::set_hook(Box::new(|info| {
         log::error!("{}", info);
     }));
@@ -85,13 +69,8 @@ fn main() -> eframe::Result<()> {
     );
 
     let desired_maximum_frame_latency = std::env::var("RAPHAEL_DESIRED_MAXIMUM_FRAME_LATENCY")
-        .map_or(None, |env_var| match env_var.parse::<u32>() {
-            Ok(value) => Some(value),
-            Err(e) => panic!(
-                "Failed to parse desired maximum frame latency with error: {}",
-                e
-            ),
-        });
+        .ok()
+        .and_then(|env_var| env_var.parse::<u32>().ok());
 
     let wgpu_options = eframe::egui_wgpu::WgpuConfiguration {
         present_mode,
@@ -124,8 +103,8 @@ fn main() {
     }
     std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
 
-    // Ensure TLS init symbol is referenced so the linker keeps it.
-    __touch_tls_anchor();
+    // Touch the TLS var so the linker keeps TLS and rustc emits __wasm_init_tls
+    unsafe { core::ptr::read_volatile(&TLS_ANCHOR) };
 
     init_logging();
 
