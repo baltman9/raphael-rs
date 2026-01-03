@@ -1,33 +1,50 @@
-// Prevents a console from being opened on Windows (ignored elsewhere)
+// Prevents a console from being opened on Windows
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
 #![cfg_attr(all(target_arch = "wasm32", feature = "wasm_threads"), feature(thread_local))]
 
-// --- Only compile TLS anchor when the `wasm_threads` feature is enabled ---
+// Only compile TLS anchor when the `wasm_threads` feature is enabled
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 #[thread_local]
 static TLS_ANCHOR: u8 = 0;
-// ---------------------------------------------------------------------------
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
+async fn init_wasm_threads() {
+    // Pick a sane worker count from the browser if available
+    let workers = web_sys::window()
+        .and_then(|w| Some(w.navigator().hardware_concurrency()))
+        .unwrap_or(4)
+        .max(2) as usize;
+
+    // Touch TLS so rustc/linker keep TLS sections (__wasm_init_tls)
+    unsafe {
+        let p: *const u8 = core::ptr::addr_of!(TLS_ANCHOR);
+        core::ptr::read_volatile(p);
+    }
+
+    // Start the Rayon worker pool for wasm
+    wasm_bindgen_rayon::init_thread_pool(workers)
+        .await
+        .expect("init wasm thread pool");
+}
+
+// No-op in single-thread builds (keeps code paths cleanly compiled out)
+#[cfg(not(all(target_arch = "wasm32", feature = "wasm_threads")))]
+async fn init_wasm_threads() {}
 
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 fn init_logging() {
-    // Ensure app storage folder exists
     let mut file_path = eframe::storage_dir("Raphael XIV").unwrap();
     if !std::fs::exists(&file_path).unwrap() {
         std::fs::create_dir_all(&file_path).unwrap();
     }
-
-    // Get log file target. File is truncated if it already exists
     file_path.push("log.txt");
     let log_file_target = Box::new(std::fs::File::create(file_path).unwrap());
-
     env_logger::builder()
         .format_timestamp(None)
         .format_target(false)
         .target(env_logger::Target::Pipe(log_file_target))
         .init();
-
-    // Ensure panics are logged when detached, since the default hook outputs to stderr
     std::panic::set_hook(Box::new(|info| {
         log::error!("{}", info);
     }));
@@ -35,7 +52,6 @@ fn init_logging() {
 
 #[cfg(target_arch = "wasm32")]
 fn init_logging() {
-    // Redirect `log` messages to the browser console:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 }
 
@@ -94,41 +110,16 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-// ------------------------ WASM (threaded) ------------------------
-#[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
-fn main() {
-    fn custom_alloc_error_hook(_layout: std::alloc::Layout) {
-        raphael_xiv::OOM_PANIC_OCCURED.store(true, std::sync::atomic::Ordering::Relaxed);
-        eframe::wasm_bindgen::throw_val("OOM panic".into());
-    }
-    std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
-
-    // Touch the TLS var so the linker keeps TLS and rustc emits __wasm_init_tls.
-    unsafe {
-        let p: *const u8 = core::ptr::addr_of!(TLS_ANCHOR);
-        core::ptr::read_volatile(p);
-    }
-
-    init_logging();
-    start_web_app();
-}
-
-// ---------------------- WASM (non-threaded) ----------------------
-#[cfg(all(target_arch = "wasm32", not(feature = "wasm_threads")))]
-fn main() {
-    fn custom_alloc_error_hook(_layout: std::alloc::Layout) {
-        raphael_xiv::OOM_PANIC_OCCURED.store(true, std::sync::atomic::Ordering::Relaxed);
-        eframe::wasm_bindgen::throw_val("OOM panic".into());
-    }
-    std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
-
-    init_logging();
-    start_web_app();
-}
-
-// Shared startup for both wasm paths
 #[cfg(target_arch = "wasm32")]
-fn start_web_app() {
+fn main() {
+    fn custom_alloc_error_hook(_layout: std::alloc::Layout) {
+        raphael_xiv::OOM_PANIC_OCCURED.store(true, std::sync::atomic::Ordering::Relaxed);
+        eframe::wasm_bindgen::throw_val("OOM panic".into());
+    }
+    std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
+
+    init_logging();
+
     fn get_canvas() -> Option<web_sys::HtmlCanvasElement> {
         use web_sys::wasm_bindgen::JsCast;
         let document = web_sys::window()?.document()?;
@@ -144,6 +135,9 @@ fn start_web_app() {
     }
 
     wasm_bindgen_futures::spawn_local(async {
+        // Initializes thread pool when the feature is ON; no-op otherwise
+        init_wasm_threads().await;
+
         let start_result = eframe::WebRunner::new()
             .start(
                 get_canvas().unwrap(),
