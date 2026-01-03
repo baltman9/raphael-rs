@@ -19,7 +19,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
-    # Compile-time env for env!("BASE_URL") in your Rust code
+    # compile-time env for env!("BASE_URL") in your Rust code
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
 
@@ -69,18 +69,15 @@ jobs:
 
       # Build the wasm with nightly and build-std so shared memory works
       - name: Build wasm (threaded std)
-      env:
-        RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296" \
+        env:
+          RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296
         run: |
           set -euo pipefail
-          cargo +nightly build \ 
+          cargo +nightly build \
             -Z build-std=std,panic_abort \
             -Z build-std-features=panic_immediate_abort,threads \
-            --target wasm32-unknown-unknown \ 
+            --target wasm32-unknown-unknown \
             --release
-        env:
-          # Ensure the inline RUSTFLAGS above are the ones that take effect.
-          RUSTFLAGS: ""
 
       - name: Locate wasm artifact
         id: wasm
@@ -144,7 +141,7 @@ jobs:
       - name: Debug - verify token from secrets
         shell: bash
         env:
-          CF_API_TOKEN: "${{ secrets.CF_API_TOKEN }}"
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
           set -euo pipefail
           echo "Verifying token..."
@@ -155,8 +152,8 @@ jobs:
       - name: Debug - list Pages projects for this account
         shell: bash
         env:
-          CF_API_TOKEN: "${{ secrets.CF_API_TOKEN }}"
-          CF_ACCOUNT_ID: "${{ secrets.CF_ACCOUNT_ID }}"
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           echo "Account: ${CF_ACCOUNT_ID}"
