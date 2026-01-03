@@ -35,13 +35,10 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
 
-      # Scope wasm flags ONLY to the wasm target
-      - name: Configure Cargo for wasm threads
+      - name: Configure Cargo for wasm threads (target-scoped flags)
         run: |
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
-          # Do not set a global [build].target here.
-          # We only scope flags to the wasm target so host tools build normally.
           [target.wasm32-unknown-unknown]
           rustflags = [
             "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
@@ -62,14 +59,54 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install trunk
-        run: cargo install --locked trunk
-
-      # Builds your SPA and copies assets to dist/
-      - name: Build web (release)
+      - name: Install trunk & wasm-bindgen
         run: |
-          trunk build index.html --release --dist dist
-          # COOP/COEP/CORP + caching headers for CF Pages
+          cargo install --locked trunk
+          cargo install -f wasm-bindgen-cli --version 0.2.92
+
+      # 1) Build threaded std + your crate to wasm
+      - name: Build wasm (threaded std)
+        run: |
+          # Build std with TLS/threads so __wasm_init_tls exists
+          cargo +nightly -Z build-std=std,panic_abort \
+            build --release --target wasm32-unknown-unknown
+
+      # 2) Run wasm-bindgen with --enable-threading to emit shared-memory glue
+      - name: Generate wasm-bindgen (threaded)
+        run: |
+          mkdir -p dist_wbg
+          # NOTE: raphael_xiv.wasm is the crate name with underscore (matches the package name)
+          wasm-bindgen \
+            --target web \
+            --no-typescript \
+            --out-dir dist_wbg \
+            --out-name raphael-xiv \
+            --enable-threading \
+            target/wasm32-unknown-unknown/release/raphael_xiv.wasm
+
+      # 3) Build static site (HTML/assets) with Trunk into a temp dir, then swap in threaded glue
+      - name: Build HTML/assets with Trunk (no wasm overrides yet)
+        run: |
+          trunk build index.html --release --dist dist_trunk
+
+      - name: Assemble final dist (threaded wasm + patched index.html)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Start from Trunk’s output
+          rsync -a dist_trunk/ dist/
+
+          # Copy in the threaded glue from wasm-bindgen
+          cp -f dist_wbg/raphael-xiv.js dist/
+          cp -f dist_wbg/raphael-xiv_bg.wasm dist/
+
+          # Patch index.html to reference our stable threaded glue name
+          # Replace any hashed raphael-xiv-*.js with raphael-xiv.js
+          sed -i -E 's#raphael-xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html
+          # Also fix any _bg.wasm hashed reference (if present)
+          sed -i -E 's#raphael-xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html
+
+          # Security & caching headers for CF Pages
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -86,24 +123,6 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
             Cross-Origin-Resource-Policy: same-origin
           EOF
-
-      # Build the crate to a wasm artifact with the target-scoped flags
-      - name: Build wasm (release)
-        run: cargo build --release --target wasm32-unknown-unknown
-
-      # Generate threaded glue/worker helpers into dist/
-      - name: Generate wasm-bindgen (threaded)
-        run: |
-          cargo install -f wasm-bindgen-cli --version 0.2.92
-          mkdir -p dist
-          # Adjust the .wasm filename if your package name differs:
-          wasm-bindgen \
-            --target web \
-            --no-typescript \
-            --out-dir dist \
-            --out-name raphael-xiv \
-            --enable-threading \
-            target/wasm32-unknown-unknown/release/raphael_xiv.wasm
 
       - name: Debug - verify token from secrets
         shell: bash
@@ -137,6 +156,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
+      # --- Detect version change to announce on Discord ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
