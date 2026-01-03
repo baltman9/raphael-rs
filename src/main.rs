@@ -3,6 +3,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
 
+/* --- TLS anchor so rustc emits __wasm_init_tls (required for wasm threads) --- */
+#[cfg(target_arch = "wasm32")]
+#[thread_local]
+static mut __TLS_ANCHOR: u8 = 0;
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn __touch_tls_anchor() {
+    // Volatile write ensures a real use so it can't be optimized away.
+    unsafe { core::ptr::write_volatile(&mut __TLS_ANCHOR, 1) };
+}
+
+// Make it even harder for link-time optimizations to drop the function.
+#[cfg(target_arch = "wasm32")]
+#[used]
+static __KEEP_TLS_FN: extern "C" fn() = __touch_tls_anchor;
+/* --------------------------------------------------------------------------- */
+
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 fn init_logging() {
     // Ensure app storage folder exists
@@ -102,6 +121,9 @@ fn main() {
         eframe::wasm_bindgen::throw_val("OOM panic".into());
     }
     std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
+
+    // >>> Important for wasm threads: ensure TLS init symbol is emitted
+    __touch_tls_anchor();
 
     init_logging();
 
