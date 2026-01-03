@@ -19,16 +19,13 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
-    env:
-      RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
-      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: "-C target-feature=+atomics,+bulk-memory,+mutable-globals --cfg=web_sys_unstable_apis"
-      BASE_URL: "https://crafting.bryansmedia.com"
-
     steps:
+      # --- Checkout ---
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 2   # need HEAD and HEAD~1 for version-change detection
 
+      # --- Rust toolchain for wasm ---
       - name: Use nightly toolchain with wasm target
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -36,13 +33,11 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
 
+      # --- Scope wasm flags to ONLY the wasm target ---
       - name: Configure Cargo for wasm threads
         run: |
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
-          [build]
-          target = "wasm32-unknown-unknown"
-
           [target.wasm32-unknown-unknown]
           rustflags = [
             "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
@@ -50,7 +45,10 @@ jobs:
             "-C", "link-arg=--max-memory=4294967296",
           ]
           EOF
+          echo "----- .cargo/config.toml -----"
+          cat .cargo/config.toml
 
+      # --- Cache cargo to speed up builds ---
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -60,18 +58,39 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      # --- Install tooling ---
       - name: Install tools (trunk, jq)
         run: |
           cargo install --locked trunk
           sudo apt-get update -y
           sudo apt-get install -y jq
 
-      # --- Build the front-end first (creates dist/) ---
+      # --- Build front-end (outputs to dist/) ---
       - name: Build web (release)
         run: |
           trunk build index.html --release --dist dist
 
-          # Headers for COOP/COEP and CORP on JS/WASM
+      # --- Build the crate for wasm (applies target-scoped flags above) ---
+      - name: Build wasm (release)
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      # --- Generate threaded JS glue and worker helpers ---
+      - name: Generate wasm-bindgen (threaded)
+        run: |
+          cargo install -f wasm-bindgen-cli --version 0.2.92
+          mkdir -p dist
+          # If your Cargo package name is different, update the .wasm filename below:
+          wasm-bindgen \
+            --target web \
+            --no-typescript \
+            --out-dir dist \
+            --out-name raphael-xiv \
+            --enable-threading \
+            target/wasm32-unknown-unknown/release/raphael_xiv.wasm
+
+      # --- Add COOP/COEP/CORP headers (and caching) ---
+      - name: Write _headers for Cloudflare Pages
+        run: |
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -88,37 +107,10 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
             Cross-Origin-Resource-Policy: same-origin
           EOF
+          echo "----- dist/_headers -----"
+          cat dist/_headers
 
-      # --- Build .wasm with the correct target/flags ---
-      - name: Build wasm (release)
-        run: cargo build --release --target wasm32-unknown-unknown
-
-      # --- Generate threaded JS glue + worker files into dist/ ---
-      - name: Generate wasm-bindgen (threaded)
-        run: |
-          cargo install -f wasm-bindgen-cli@0.2.92
-          CRATE_NAME=$(cargo metadata --format-version=1 | jq -r '.packages[0].name')
-          mkdir -p dist
-          wasm-bindgen \
-            --target web \
-            --no-typescript \
-            --out-dir dist \
-            --out-name raphael-xiv \
-            --enable-threading \
-            target/wasm32-unknown-unknown/release/${CRATE_NAME}.wasm
-
-          echo "----- rustc -----";  rustc -Vv
-          echo "----- cargo -----"; cargo -Vv
-          echo "----- .cargo/config.toml -----"; cat .cargo/config.toml
-          echo "----- dist listing -----"; ls -la dist; find dist -maxdepth 2 -type f -name 'workerHelpers.no-bundler.js' -print
-
-      - name: Sanity check for worker helpers
-        run: |
-          test -f dist/raphael-xiv.js
-          test -f dist/raphael-xiv_bg.wasm
-          # critical for rayon threads:
-          find dist -type f -name 'workerHelpers.no-bundler.js' | grep -q .
-
+      # --- Optional debug: verify CF token and list Pages projects ---
       - name: Debug - verify token from secrets
         shell: bash
         env:
@@ -142,6 +134,7 @@ jobs:
             "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects" \
             | jq '{success, names: [.result[].name]}'
 
+      # --- Publish to Cloudflare Pages ---
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
@@ -151,6 +144,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
+      # --- Detect version change in Cargo.toml (optional embed note) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
@@ -160,19 +154,26 @@ jobs:
           git fetch --no-tags --depth=2 origin "${GITHUB_REF_NAME:-main}" || true
           prev="${{ github.event.before || '' }}"
           curr="${{ github.sha }}"
-          if [ -z "$prev" ]; then prev="$(git rev-parse HEAD~1 2>/dev/null || echo '')"; fi
+          if [ -z "$prev" ]; then
+            prev="$(git rev-parse HEAD~1 2>/dev/null || echo '')"
+          fi
           changed="false"
-          if [ -n "$prev" ] && git diff --name-only "$prev" "$curr" | grep -x "$CARGO_FILE" >/dev/null 2>&1; then changed="true"; fi
+          if [ -n "$prev" ] && git diff --name-only "$prev" "$curr" | grep -x "$CARGO_FILE" >/dev/null 2>&1; then
+            changed="true"
+          fi
           version="$(
             awk '
               /^\[package\]$/ { p=1; next }
               /^\[/          { p=0 }
-              p && /^version[[:space:]]*=/ { gsub(/"/,"",$3); print $3; exit }
+              p && /^version[[:space:]]*=/ {
+                gsub(/"/,"",$3); print $3; exit
+              }
             ' "$CARGO_FILE"
           )"
           echo "changed=$changed"  >> "$GITHUB_OUTPUT"
           echo "version=$version"  >> "$GITHUB_OUTPUT"
 
+      # --- Discord success embed only if version changed ---
       - name: "Discord: deployed new version (embed)"
         if: ${{ steps.ver.outputs.changed == 'true' && success() }}
         shell: bash
@@ -184,13 +185,27 @@ jobs:
           title="Deployed v${{ steps.ver.outputs.version }}"
           repo="${{ github.repository }}"
           sha="${{ github.sha }}"
-          payload=$(jq -n --arg t "$title" --arg site "$site" --arg repo "$repo" --arg sha "$sha" '
-            {content:"", embeds:[{title:$t, url:$site, color:5763719,
-              fields:[{name:"Site",value:"<\($site)>",inline:false},
-                      {name:"Repo",value:$repo,inline:true},
-                      {name:"Commit",value:"`\($sha)`",inline:true}]}]}')
+          payload=$(jq -n \
+            --arg t "$title" \
+            --arg site "$site" \
+            --arg repo "$repo" \
+            --arg sha "$sha" \
+            '{
+              content: "",
+              embeds: [{
+                title: $t,
+                url: $site,
+                color: 5763719,
+                fields: [
+                  { "name": "Site",   "value": "<\($site)>", "inline": false },
+                  { "name": "Repo",   "value": $repo,        "inline": true  },
+                  { "name": "Commit", "value": "`\($sha)`",  "inline": true  }
+                ]
+              }]
+            }')
           curl -sS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
 
+      # --- Discord failure notification (always if any step failed) ---
       - name: "Discord: deploy failed"
         if: ${{ failure() }}
         shell: bash
