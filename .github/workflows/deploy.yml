@@ -69,11 +69,10 @@ jobs:
 
       # Build the wasm with nightly and build-std so shared memory works
       - name: Build wasm (threaded std)
+      env:
+        RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296" \
         run: |
-          RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
-                     -C link-arg=--shared-memory \
-                     -C link-arg=--import-memory \
-                     -C link-arg=--max-memory=4294967296" \
+          set -euo pipefail
           cargo +nightly build \ 
             -Z build-std=std,panic_abort \
             -Z build-std-features=panic_immediate_abort,threads \
