@@ -88,9 +88,14 @@ jobs:
 
           /*.js
             Cache-Control: public, max-age=31536000, immutable
+            Cross-Origin-Resource-Policy: same-origin
 
           /*.wasm
             Cache-Control: public, max-age=31536000, immutable
+            Cross-Origin-Resource-Policy: same-origin
+
+          /snippets/*
+            Cross-Origin-Resource-Policy: same-origin
           EOF
 
       - name: Debug - verify token from secrets
