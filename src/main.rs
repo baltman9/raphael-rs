@@ -2,6 +2,7 @@
 // This attribute is ignored for all other platforms
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
+#![cfg_attr(target_arch = "wasm32", feature(thread_local))] // <-- add this
 
 /* --- TLS anchor so rustc emits __wasm_init_tls (required for wasm threads) --- */
 #[cfg(target_arch = "wasm32")]
@@ -9,14 +10,13 @@
 static mut __TLS_ANCHOR: u8 = 0;
 
 #[cfg(target_arch = "wasm32")]
-#[no_mangle]
+#[unsafe(no_mangle)]               // <-- nightly requires the unsafe() form
 #[inline(never)]
 pub extern "C" fn __touch_tls_anchor() {
     // Volatile write ensures a real use so it can't be optimized away.
     unsafe { core::ptr::write_volatile(&mut __TLS_ANCHOR, 1) };
 }
 
-// Make it even harder for link-time optimizations to drop the function.
 #[cfg(target_arch = "wasm32")]
 #[used]
 static __KEEP_TLS_FN: extern "C" fn() = __touch_tls_anchor;
@@ -122,7 +122,7 @@ fn main() {
     }
     std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
 
-    // >>> Important for wasm threads: ensure TLS init symbol is emitted
+    // Ensure TLS init symbol is referenced so the linker keeps it.
     __touch_tls_anchor();
 
     init_logging();
