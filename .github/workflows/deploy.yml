@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # need HEAD and HEAD~1 for version-change detection
+          fetch-depth: 2
 
       - name: Use nightly toolchain with wasm target
         uses: dtolnay/rust-toolchain@nightly
@@ -46,21 +46,10 @@ jobs:
           [target.wasm32-unknown-unknown]
           rustflags = [
             "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
-            # linker args recommended for shared memory
             "-C", "link-arg=--shared-memory",
             "-C", "link-arg=--max-memory=4294967296",
           ]
-
-          [unstable]
-          build-std = ["panic_abort", "std"]
           EOF
-
-          echo "----- rustc -----"
-          rustc -Vv
-          echo "----- cargo -----"
-          cargo -Vv
-          echo "----- .cargo/config.toml -----"
-          cat .cargo/config.toml
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -71,13 +60,18 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install trunk
-        run: cargo install --locked trunk
+      - name: Install tools (trunk, jq)
+        run: |
+          cargo install --locked trunk
+          sudo apt-get update -y
+          sudo apt-get install -y jq
 
+      # --- Build the front-end first (creates dist/) ---
       - name: Build web (release)
         run: |
           trunk build index.html --release --dist dist
 
+          # Headers for COOP/COEP and CORP on JS/WASM
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -94,6 +88,36 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
             Cross-Origin-Resource-Policy: same-origin
           EOF
+
+      # --- Build .wasm with the correct target/flags ---
+      - name: Build wasm (release)
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      # --- Generate threaded JS glue + worker files into dist/ ---
+      - name: Generate wasm-bindgen (threaded)
+        run: |
+          cargo install -f wasm-bindgen-cli@0.2.92
+          CRATE_NAME=$(cargo metadata --format-version=1 | jq -r '.packages[0].name')
+          mkdir -p dist
+          wasm-bindgen \
+            --target web \
+            --no-typescript \
+            --out-dir dist \
+            --out-name raphael-xiv \
+            --enable-threading \
+            target/wasm32-unknown-unknown/release/${CRATE_NAME}.wasm
+
+          echo "----- rustc -----";  rustc -Vv
+          echo "----- cargo -----"; cargo -Vv
+          echo "----- .cargo/config.toml -----"; cat .cargo/config.toml
+          echo "----- dist listing -----"; ls -la dist; find dist -maxdepth 2 -type f -name 'workerHelpers.no-bundler.js' -print
+
+      - name: Sanity check for worker helpers
+        run: |
+          test -f dist/raphael-xiv.js
+          test -f dist/raphael-xiv_bg.wasm
+          # critical for rayon threads:
+          find dist -type f -name 'workerHelpers.no-bundler.js' | grep -q .
 
       - name: Debug - verify token from secrets
         shell: bash
@@ -127,42 +151,28 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Detect if the root Cargo.toml changed (i.e., version bumped) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
         run: |
           set -euo pipefail
           CARGO_FILE="Cargo.toml"
-
-          # Ensure we have at least two commits in this shallow clone
           git fetch --no-tags --depth=2 origin "${GITHUB_REF_NAME:-main}" || true
-
           prev="${{ github.event.before || '' }}"
           curr="${{ github.sha }}"
-          if [ -z "$prev" ]; then
-            prev="$(git rev-parse HEAD~1 2>/dev/null || echo '')"
-          fi
-
+          if [ -z "$prev" ]; then prev="$(git rev-parse HEAD~1 2>/dev/null || echo '')"; fi
           changed="false"
-          if [ -n "$prev" ] && git diff --name-only "$prev" "$curr" | grep -x "$CARGO_FILE" >/dev/null 2>&1; then
-            changed="true"
-          fi
-
+          if [ -n "$prev" ] && git diff --name-only "$prev" "$curr" | grep -x "$CARGO_FILE" >/dev/null 2>&1; then changed="true"; fi
           version="$(
             awk '
               /^\[package\]$/ { p=1; next }
               /^\[/          { p=0 }
-              p && /^version[[:space:]]*=/ {
-                gsub(/"/,"",$3); print $3; exit
-              }
+              p && /^version[[:space:]]*=/ { gsub(/"/,"",$3); print $3; exit }
             ' "$CARGO_FILE"
           )"
-
           echo "changed=$changed"  >> "$GITHUB_OUTPUT"
           echo "version=$version"  >> "$GITHUB_OUTPUT"
 
-      # --- Notify Discord only if version changed and the deploy succeeded ---
       - name: "Discord: deployed new version (embed)"
         if: ${{ steps.ver.outputs.changed == 'true' && success() }}
         shell: bash
@@ -174,31 +184,13 @@ jobs:
           title="Deployed v${{ steps.ver.outputs.version }}"
           repo="${{ github.repository }}"
           sha="${{ github.sha }}"
+          payload=$(jq -n --arg t "$title" --arg site "$site" --arg repo "$repo" --arg sha "$sha" '
+            {content:"", embeds:[{title:$t, url:$site, color:5763719,
+              fields:[{name:"Site",value:"<\($site)>",inline:false},
+                      {name:"Repo",value:$repo,inline:true},
+                      {name:"Commit",value:"`\($sha)`",inline:true}]}]}')
+          curl -sS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
 
-          payload=$(jq -n \
-            --arg t "$title" \
-            --arg site "$site" \
-            --arg repo "$repo" \
-            --arg sha "$sha" \
-            '{
-              content: "",
-              embeds: [{
-                title: $t,
-                url: $site,
-                color: 5763719,
-                fields: [
-                  { "name": "Site",   "value": "<\($site)>", "inline": false },
-                  { "name": "Repo",   "value": $repo,        "inline": true  },
-                  { "name": "Commit", "value": "`\($sha)`",  "inline": true  }
-                ]
-              }]
-            }')
-
-          curl -sS -H "Content-Type: application/json" \
-               -d "$payload" \
-               "$DISCORD_WEBHOOK"
-
-      # --- Always send a failure message if any step above failed ---
       - name: "Discord: deploy failed"
         if: ${{ failure() }}
         shell: bash
