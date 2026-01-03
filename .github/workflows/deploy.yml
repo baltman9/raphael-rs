@@ -60,18 +60,37 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install trunk & wasm-bindgen
-        run: |
-          cargo install --locked trunk
-          cargo install -f wasm-bindgen-cli --version 0.2.92
+              run: |
+                cargo install --locked trunk
+                cargo install -f wasm-bindgen-cli --version 0.2.92
 
-      # 1) Build threaded std + your crate to wasm
-      - name: Build wasm (threaded std)
+          - name: Build wasm (threaded std)
         run: |
-          # Build std with TLS/threads so __wasm_init_tls exists
-          cargo +nightly -Z build-std=std,panic_abort \
-            build --release --target wasm32-unknown-unknown
+          RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals \
+                     -C link-arg=--shared-memory \
+                     -C link-arg=--import-memory \
+                     -C link-arg=--max-memory=4294967296" \
+          cargo +nightly build -Z build-std=std,panic_abort \
+            --target wasm32-unknown-unknown --release
+        env:
+          RUSTFLAGS: ""   # ensure the inline RUSTFLAGS above take effect cleanly
 
-      # 2) Run wasm-bindgen with --enable-threading to emit shared-memory glue
+      # Locate the produced .wasm (dash vs underscore, etc.)
+      - name: Locate wasm artifact
+        id: wasm
+        run: |
+          set -euo pipefail
+          echo "Listing wasm artifacts:"
+          ls -lah target/wasm32-unknown-unknown/release || true
+          WASM_PATH=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -n1)
+          if [ -z "${WASM_PATH:-}" ]; then
+            echo "No .wasm produced under target/wasm32-unknown-unknown/release"
+            exit 1
+          fi
+          echo "Found wasm: $WASM_PATH"
+          echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
+
+      # Run wasm-bindgen (no --enable-threads flag on 0.2.106)
       - name: Generate wasm-bindgen (threaded)
         run: |
           cargo install -f wasm-bindgen-cli --version 0.2.106
@@ -82,7 +101,7 @@ jobs:
             --no-typescript \
             --out-dir dist_wbg \
             --out-name raphael-xiv \
-            target/wasm32-unknown-unknown/release/raphael_xiv.wasm
+            "${{ steps.wasm.outputs.path }}"
 
       # 3) Build static site (HTML/assets) with Trunk into a temp dir, then swap in threaded glue
       - name: Build HTML/assets with Trunk (no wasm overrides yet)
