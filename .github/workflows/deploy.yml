@@ -74,14 +74,15 @@ jobs:
       # 2) Run wasm-bindgen with --enable-threading to emit shared-memory glue
       - name: Generate wasm-bindgen (threaded)
         run: |
+          cargo install -f wasm-bindgen-cli --version 0.2.106
+          wasm-bindgen -V
           mkdir -p dist_wbg
-          # NOTE: raphael_xiv.wasm is the crate name with underscore (matches the package name)
           wasm-bindgen \
             --target web \
             --no-typescript \
             --out-dir dist_wbg \
             --out-name raphael-xiv \
-            --enable-threading \
+            --enable-threads \
             target/wasm32-unknown-unknown/release/raphael_xiv.wasm
 
       # 3) Build static site (HTML/assets) with Trunk into a temp dir, then swap in threaded glue
