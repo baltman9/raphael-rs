@@ -1,11 +1,10 @@
-// Prevents a console from being opened on Windows
-// This attribute is ignored for all other platforms
+// Prevents a console from being opened on Windows (ignored elsewhere)
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
-#![cfg_attr(target_arch = "wasm32", feature(thread_local))] // nightly for #[thread_local]
+#![cfg_attr(all(target_arch = "wasm32", feature = "wasm_threads"), feature(thread_local))]
 
-// --- Force TLS so rustc emits __wasm_init_tls (required for wasm threads) ---
-#[cfg(target_arch = "wasm32")]
+// --- Only compile TLS anchor when the `wasm_threads` feature is enabled ---
+#[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 #[thread_local]
 static TLS_ANCHOR: u8 = 0;
 // ---------------------------------------------------------------------------
@@ -95,7 +94,8 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-#[cfg(target_arch = "wasm32")]
+// ------------------------ WASM (threaded) ------------------------
+#[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 fn main() {
     fn custom_alloc_error_hook(_layout: std::alloc::Layout) {
         raphael_xiv::OOM_PANIC_OCCURED.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -103,14 +103,32 @@ fn main() {
     }
     std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
 
-    // Touch the TLS var so the linker keeps TLS and rustc emits __wasm_init_tls
+    // Touch the TLS var so the linker keeps TLS and rustc emits __wasm_init_tls.
     unsafe {
         let p: *const u8 = core::ptr::addr_of!(TLS_ANCHOR);
         core::ptr::read_volatile(p);
     }
 
     init_logging();
+    start_web_app();
+}
 
+// ---------------------- WASM (non-threaded) ----------------------
+#[cfg(all(target_arch = "wasm32", not(feature = "wasm_threads")))]
+fn main() {
+    fn custom_alloc_error_hook(_layout: std::alloc::Layout) {
+        raphael_xiv::OOM_PANIC_OCCURED.store(true, std::sync::atomic::Ordering::Relaxed);
+        eframe::wasm_bindgen::throw_val("OOM panic".into());
+    }
+    std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
+
+    init_logging();
+    start_web_app();
+}
+
+// Shared startup for both wasm paths
+#[cfg(target_arch = "wasm32")]
+fn start_web_app() {
     fn get_canvas() -> Option<web_sys::HtmlCanvasElement> {
         use web_sys::wasm_bindgen::JsCast;
         let document = web_sys::window()?.document()?;
