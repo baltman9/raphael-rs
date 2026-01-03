@@ -78,10 +78,6 @@ jobs:
         run: |
           trunk build index.html --release --dist dist
 
-          RAND=$(head -c16 /dev/urandom | md5sum | cut -c1-8)
-          if [ -f dist/webworker.js ]; then mv dist/webworker.js dist/webworker-${RAND}.js; fi
-          if [ -f dist/webworker_bg.wasm ]; then mv dist/webworker_bg.wasm dist/webworker-${RAND}_bg.wasm; fi
-
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
