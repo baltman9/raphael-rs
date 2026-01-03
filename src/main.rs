@@ -14,6 +14,7 @@ static mut __TLS_ANCHOR: u8 = 0;
 #[inline(never)]
 pub extern "C" fn __touch_tls_anchor() {
     // Volatile write ensures a real use so it can't be optimized away.
+    let p = core::ptr::addr_of_mut!(__TLS_ANCHOR);
     unsafe { core::ptr::write_volatile(&mut __TLS_ANCHOR, 1) };
 }
 
