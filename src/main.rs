@@ -104,7 +104,10 @@ fn main() {
     std::alloc::set_alloc_error_hook(custom_alloc_error_hook);
 
     // Touch the TLS var so the linker keeps TLS and rustc emits __wasm_init_tls
-    unsafe { core::ptr::read_volatile(&TLS_ANCHOR) };
+    unsafe {
+        let p: *const u8 = core::ptr::addr_of!(TLS_ANCHOR);
+        core::ptr::read_volatile(p);
+    }
 
     init_logging();
 
