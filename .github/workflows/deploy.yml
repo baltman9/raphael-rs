@@ -28,8 +28,8 @@ jobs:
 
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
-      # Opt-in toggle (default off). You can also set a repo/env var named WASM_THREADS=1.
-      WASM_THREADS: ${{ inputs.wasm_threads || env.WASM_THREADS || '0' }}
+      # Pull from workflow_dispatch input when present, otherwise "0"
+      WASM_THREADS: ${{ (github.event.inputs.wasm_threads || '0') }}
 
     steps:
       - name: Checkout
@@ -82,7 +82,6 @@ jobs:
         if: ${{ env.WASM_THREADS != '1' }}
         run: |
           set -euo pipefail
-          # No atomics/shared-memory flags here
           cargo +nightly build --target wasm32-unknown-unknown --release
 
       # Threaded build (opt-in)
@@ -90,14 +89,13 @@ jobs:
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
           set -euo pipefail
-          # Build std for wasm and enable your gated feature
           cargo +nightly build \
             -Z build-std=std,panic_abort \
             --features wasm_threads \
             --target wasm32-unknown-unknown \
             --release
 
-      # Locate the produced wasm (handles hyphen/underscore naming)
+      # Locate the produced wasm
       - name: Locate wasm artifact
         id: wasm
         shell: bash
@@ -113,7 +111,6 @@ jobs:
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
       # ---------- wasm-bindgen ----------
-      # Non-threaded glue (default)
       - name: Generate wasm-bindgen (NON-threaded)
         if: ${{ env.WASM_THREADS != '1' }}
         run: |
@@ -126,13 +123,12 @@ jobs:
             --out-name raphael-xiv \
             "${{ steps.wasm.outputs.path }}"
 
-      # Threaded glue (opt-in)
       - name: Generate wasm-bindgen (THREADED)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
           set -euo pipefail
           mkdir -p dist_wbg
-          # wasm-bindgen 0.2.106 detects shared memory automatically; no --enable-threads flag
+          # wasm-bindgen 0.2.106 detects shared memory automatically
           wasm-bindgen \
             --target web \
             --no-typescript \
