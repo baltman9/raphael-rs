@@ -7,7 +7,7 @@
 // --- Force TLS so rustc emits __wasm_init_tls (required for wasm threads) ---
 #[cfg(target_arch = "wasm32")]
 #[thread_local]
-static mut TLS_ANCHOR: u8 = 0;
+static TLS_ANCHOR: u8 = 0;
 // ---------------------------------------------------------------------------
 
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
