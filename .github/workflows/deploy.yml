@@ -19,6 +19,7 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
+    # Compile-time env for env!("BASE_URL") in your Rust code
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
 
@@ -39,6 +40,7 @@ jobs:
         run: |
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
+          # Only affect the wasm target; host tools build normally.
           [target.wasm32-unknown-unknown]
           rustflags = [
             "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
@@ -65,16 +67,10 @@ jobs:
           cargo install -f wasm-bindgen-cli --version 0.2.106
           wasm-bindgen -V
 
-      # Build std for wasm with panic-abort + atomics/bulk/shared
+      # Build the wasm with nightly + build-std so shared memory works
       - name: Build wasm (threaded std)
         env:
-          RUSTFLAGS: >-
-            -Z unstable-options
-            -C panic=immediate-abort
-            -C target-feature=+atomics,+bulk-memory,+mutable-globals
-            -C link-arg=--shared-memory
-            -C link-arg=--import-memory
-            -C link-arg=--max-memory=4294967296
+          RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals -C link-arg=--shared-memory -C link-arg=--import-memory -C link-arg=--max-memory=4294967296
         run: |
           set -euo pipefail
           cargo +nightly build \
@@ -97,6 +93,7 @@ jobs:
           echo "Found wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
+      # wasm-bindgen 0.2.106 (no --enable-threads here). Requires __wasm_init_tls export (see TLS shim).
       - name: Generate wasm-bindgen (threaded)
         run: |
           mkdir -p dist_wbg
@@ -115,11 +112,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Start from Trunk’s output
           rsync -a dist_trunk/ dist/
+          # Copy in the threaded glue from wasm-bindgen
           cp -f dist_wbg/raphael-xiv.js dist/
           cp -f dist_wbg/raphael-xiv_bg.wasm dist/
+          # Patch index.html to reference stable names
           sed -i -E 's#raphael-xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
           sed -i -E 's#raphael-xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
+          # Security & caching headers for Cloudflare Pages
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -169,6 +170,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
+      # --- Detect version change in Cargo.toml (root) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
@@ -232,7 +234,7 @@ jobs:
         if: ${{ failure() }}
         shell: bash
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DIRECT_WEBHOOK || secrets.DISCORD_WEBHOOK }}
         run: |
           set -e
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
