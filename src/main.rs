@@ -2,15 +2,16 @@
 // This attribute is ignored for all other platforms
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
+#![cfg_attr(target_arch = "wasm32", feature(unsafe_attributes))] // for #[unsafe(...)] attrs on nightly
 
 // --- TLS anchor so rustc emits __wasm_init_tls (required for wasm threads) ---
 #[cfg(target_arch = "wasm32")]
-#[link_section = ".tdata"]
+#[unsafe(link_section = ".tdata")]
 #[used]
 static mut __TLS_ANCHOR: u8 = 0;
 
 #[cfg(target_arch = "wasm32")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn __touch_tls_anchor() {
     // Volatile write via RAW pointer (no &mut to a mutable static!)
