@@ -19,13 +19,15 @@ jobs:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
 
+    # Compile-time env for env!("BASE_URL")
+    env:
+      BASE_URL: "https://crafting.bryansmedia.com"
+
     steps:
-      # --- Checkout ---
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2   # need HEAD and HEAD~1 for version-change detection
+          fetch-depth: 2
 
-      # --- Rust toolchain for wasm ---
       - name: Use nightly toolchain with wasm target
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -33,11 +35,13 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
 
-      # --- Scope wasm flags to ONLY the wasm target ---
+      # Scope wasm flags ONLY to the wasm target
       - name: Configure Cargo for wasm threads
         run: |
           mkdir -p .cargo
           cat > .cargo/config.toml <<'EOF'
+          # Do not set a global [build].target here.
+          # We only scope flags to the wasm target so host tools build normally.
           [target.wasm32-unknown-unknown]
           rustflags = [
             "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
@@ -48,7 +52,6 @@ jobs:
           echo "----- .cargo/config.toml -----"
           cat .cargo/config.toml
 
-      # --- Cache cargo to speed up builds ---
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -58,39 +61,14 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      # --- Install tooling ---
-      - name: Install tools (trunk, jq)
-        run: |
-          cargo install --locked trunk
-          sudo apt-get update -y
-          sudo apt-get install -y jq
+      - name: Install trunk
+        run: cargo install --locked trunk
 
-      # --- Build front-end (outputs to dist/) ---
+      # Builds your SPA and copies assets to dist/
       - name: Build web (release)
         run: |
           trunk build index.html --release --dist dist
-
-      # --- Build the crate for wasm (applies target-scoped flags above) ---
-      - name: Build wasm (release)
-        run: cargo build --release --target wasm32-unknown-unknown
-
-      # --- Generate threaded JS glue and worker helpers ---
-      - name: Generate wasm-bindgen (threaded)
-        run: |
-          cargo install -f wasm-bindgen-cli --version 0.2.92
-          mkdir -p dist
-          # If your Cargo package name is different, update the .wasm filename below:
-          wasm-bindgen \
-            --target web \
-            --no-typescript \
-            --out-dir dist \
-            --out-name raphael-xiv \
-            --enable-threading \
-            target/wasm32-unknown-unknown/release/raphael_xiv.wasm
-
-      # --- Add COOP/COEP/CORP headers (and caching) ---
-      - name: Write _headers for Cloudflare Pages
-        run: |
+          # COOP/COEP/CORP + caching headers for CF Pages
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -107,10 +85,25 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
             Cross-Origin-Resource-Policy: same-origin
           EOF
-          echo "----- dist/_headers -----"
-          cat dist/_headers
 
-      # --- Optional debug: verify CF token and list Pages projects ---
+      # Build the crate to a wasm artifact with the target-scoped flags
+      - name: Build wasm (release)
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      # Generate threaded glue/worker helpers into dist/
+      - name: Generate wasm-bindgen (threaded)
+        run: |
+          cargo install -f wasm-bindgen-cli --version 0.2.92
+          mkdir -p dist
+          # Adjust the .wasm filename if your package name differs:
+          wasm-bindgen \
+            --target web \
+            --no-typescript \
+            --out-dir dist \
+            --out-name raphael-xiv \
+            --enable-threading \
+            target/wasm32-unknown-unknown/release/raphael_xiv.wasm
+
       - name: Debug - verify token from secrets
         shell: bash
         env:
@@ -134,7 +127,6 @@ jobs:
             "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects" \
             | jq '{success, names: [.result[].name]}'
 
-      # --- Publish to Cloudflare Pages ---
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
@@ -144,7 +136,6 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Detect version change in Cargo.toml (optional embed note) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
@@ -173,7 +164,6 @@ jobs:
           echo "changed=$changed"  >> "$GITHUB_OUTPUT"
           echo "version=$version"  >> "$GITHUB_OUTPUT"
 
-      # --- Discord success embed only if version changed ---
       - name: "Discord: deployed new version (embed)"
         if: ${{ steps.ver.outputs.changed == 'true' && success() }}
         shell: bash
@@ -205,7 +195,6 @@ jobs:
             }')
           curl -sS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
 
-      # --- Discord failure notification (always if any step failed) ---
       - name: "Discord: deploy failed"
         if: ${{ failure() }}
         shell: bash
