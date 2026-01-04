@@ -159,36 +159,35 @@ jobs:
           fi
 
       # ==================== ASSEMBLE FINAL SITE ====================
-      - name: Assemble final dist (no Trunk)
+      - name: Assemble final dist (publish full bindgen output)
         shell: bash
         run: |
           set -euo pipefail
+
           rm -rf dist
           mkdir -p dist
 
-          # Copy NON-threaded bindgen outputs (always present)
-          JS_SRC=""
-          WASM_SRC=""
-          if   [ -f dist_wbg_nt/raphael-xiv.js ]; then JS_SRC="dist_wbg_nt/raphael-xiv.js"
-          elif [ -f dist_wbg_nt/raphael_xiv.js ]; then JS_SRC="dist_wbg_nt/raphael_xiv.js"
-          fi
-          if   [ -f dist_wbg_nt/raphael-xiv_bg.wasm ]; then WASM_SRC="dist_wbg_nt/raphael-xiv_bg.wasm"
-          elif [ -f dist_wbg_nt/raphael_xiv_bg.wasm ]; then WASM_SRC="dist_wbg_nt/raphael_xiv_bg.wasm"
-          fi
-          if [ -z "$JS_SRC" ] || [ -z "$WASM_SRC" ]; then
-            echo "::error::Bindgen artifacts missing in dist_wbg_nt"
-            ls -lah dist_wbg_nt || true
+          # Copy EVERYTHING wasm-bindgen produced (includes snippets/, helper JS, etc.)
+          if [ ! -d dist_wbg_nt ]; then
+            echo "::error::dist_wbg_nt missing; wasm-bindgen step may have failed"
+            ls -lah . || true
             exit 1
           fi
-          cp -f "$JS_SRC"   dist/raphael-xiv.js
-          cp -f "$WASM_SRC" dist/raphael-xiv_bg.wasm
+
+          echo "Copying full wasm-bindgen output from dist_wbg_nt/ to dist/"
+          rsync -a dist_wbg_nt/ dist/
+          echo "dist/ after rsync:"
+          ls -lah dist || true
+          [ -d dist/snippets ] && echo "snippets/ present ✅" || echo "snippets/ not present (may be OK depending on build) ⚠️"
 
           # Static bits
           cp -f index.ci.html dist/index.html
           cp -f loader.js dist/
+
           [ -d assets ] && rsync -a assets/ dist/assets/
           [ -d static ] && rsync -a static/ dist/static/
           [ -d public ] && rsync -a public/ dist/public/
+
           for f in favicon.ico favicon.png favicon.svg robots.txt sitemap.xml *.css; do
             [ -e "$f" ] && cp -f "$f" dist/ || true
           done
@@ -207,6 +206,7 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
             Cross-Origin-Resource-Policy: same-origin
           EOF
+
 
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
