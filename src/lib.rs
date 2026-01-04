@@ -13,7 +13,7 @@ pub use app::MacroSolverApp;
 
 mod config;
 mod context;
-mod thread_pool;
+pub mod thread_pool;
 mod widgets;
 
 #[cfg(target_arch = "wasm32")]
