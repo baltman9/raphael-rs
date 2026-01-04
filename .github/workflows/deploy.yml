@@ -3,7 +3,7 @@ name: Build & Deploy (main -> crafting.bryansmedia.com)
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
+  workflow_dispatch:        # keep this; shows Run button when available
     inputs:
       wasm_threads:
         description: "Build with WebAssembly threads"
@@ -28,7 +28,8 @@ jobs:
 
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
-      WASM_THREADS: ${{ (github.event.inputs.wasm_threads || '0') }}
+      # Priority: manual input (if present) -> repo variable -> '0'
+      WASM_THREADS: ${{ github.event.inputs.wasm_threads || vars.WASM_THREADS || '0' }}
 
     steps:
       - name: Checkout
@@ -43,7 +44,7 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
 
-      # Only write .cargo/config when doing a THREADED build
+      # Only needed when building with threads
       - name: Configure Cargo for wasm threads (target-scoped flags)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
@@ -92,7 +93,7 @@ jobs:
             --target wasm32-unknown-unknown \
             --release
 
-      # Locate the produced wasm
+      # ---------- Locate wasm ----------
       - name: Locate wasm artifact
         id: wasm
         shell: bash
@@ -125,7 +126,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist_wbg
-          # wasm-bindgen 0.2.106 detects shared memory automatically
           wasm-bindgen \
             --target web \
             --no-typescript \
@@ -145,28 +145,8 @@ jobs:
           rsync -a dist_trunk/ dist/
           cp -f dist_wbg/raphael-xiv.js dist/
           cp -f dist_wbg/raphael-xiv_bg.wasm dist/
-
-          # Replace BOTH dash and underscore hashed names that Trunk may emit
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
-
-          # Fallback injector: if the script still isn't referenced, inject before </body>
-          if ! grep -q "raphael-xiv.js" dist/index.html; then
-            echo "Injecting fallback <script> tag for raphael-xiv.js"
-            tmpfile="$(mktemp)"
-            awk '{
-              print;
-            }
-            /<\/body>/ {
-              print "<script type=\"module\">";
-              print "import init from \"./raphael-xiv.js\";";
-              print "init();";
-              print "</script>";
-            }' dist/index.html > "${tmpfile}"
-            mv "${tmpfile}" dist/index.html
-          fi
-
-          # Security & caching headers
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -181,28 +161,6 @@ jobs:
             Cross-Origin-Resource-Policy: same-origin
           EOF
 
-      - name: Debug - verify token from secrets
-        shell: bash
-        env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          curl -fsSL -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/user/tokens/verify" \
-            | jq '{success, result: {status, id}}'
-
-      - name: Debug - list Pages projects for this account
-        shell: bash
-        env:
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          echo "Account: ${CF_ACCOUNT_ID}"
-          curl -fsSL -H "Authorization: Bearer ${CF_API_TOKEN}" \
-            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects" \
-            | jq '{success, names: [.result[].name]}'
-
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
@@ -212,7 +170,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Notify on version bump ---
+      # (version bump + Discord steps unchanged)
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
