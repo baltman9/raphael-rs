@@ -1,9 +1,8 @@
-// When building for wasm32 with threads enabled, re-export the real init.
+// Threads ON: re-export real initializer
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 pub use wasm_bindgen_rayon::init_thread_pool;
 
-// When building for wasm32 WITHOUT threads, provide a no-op Promise so call sites
-// (that expect a Promise) still compile and run.
+// Threads OFF: provide a no-op Promise
 #[cfg(all(target_arch = "wasm32", not(feature = "wasm_threads")))]
 pub fn init_thread_pool(_pool_size: Option<usize>) -> js_sys::Promise {
     js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)
