@@ -34,12 +34,13 @@ fn initialize(num_threads: Option<NonZeroUsize>) {
     }
 }
 
-#[cfg(target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 fn initialize(num_threads: Option<NonZeroUsize>) {
     let num_threads = num_threads.unwrap_or_else(default_thread_count);
 
-    // NOTE: our crate::init_thread_pool returns a JS Promise; wrap into JsFuture
-    let future = wasm_bindgen_futures::JsFuture::from(crate::init_thread_pool(num_threads.get()));
+    // Start the Rayon pool for wasm (returns a Promise)
+    let promise = wasm_bindgen_rayon::init_thread_pool(num_threads.get());
+    let future = wasm_bindgen_futures::JsFuture::from(promise);
 
     wasm_bindgen_futures::spawn_local(async move {
         let result = future.await;
@@ -54,21 +55,25 @@ fn initialize(num_threads: Option<NonZeroUsize>) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn default_thread_count() -> NonZeroUsize {
-    // available_parallelism() -> Result<NonZeroUsize, _>; unwrap_or_else EXPECTS a closure taking the error.
-    std::thread::available_parallelism()
-        .map(|detected| {
-            let n = std::cmp::max(2, detected.get() / 2);
-            NonZeroUsize::new(n).unwrap()
-        })
-        .unwrap_or_else(|_| NonZeroUsize::new(4).unwrap())
+    // Use `map_or_else` so both branches are closures (fixes arity warning)
+    std::thread::available_parallelism().map_or_else(
+        || NonZeroUsize::new(4).unwrap(),
+        |detected| {
+            let num_threads = std::cmp::max(2, detected.get() / 2);
+            NonZeroUsize::new(num_threads).unwrap()
+        },
+    )
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn default_thread_count() -> NonZeroUsize {
-    let window = web_sys::window().unwrap();
-    let detected = window.navigator().hardware_concurrency() as usize;
-    // See https://github.com/KonaeAkira/raphael-rs/issues/169
-    NonZeroUsize::new((detected / 2).clamp(2, 8)).unwrap()
+    // Navigator reports u32; clamp a sane range and ensure nonzero
+    let detected = web_sys::window()
+        .map(|w| w.navigator().hardware_concurrency())
+        .unwrap_or(4);
+
+    let n = ((detected as usize) / 2).clamp(2, 8);
+    NonZeroUsize::new(n).unwrap()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
