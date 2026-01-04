@@ -28,7 +28,6 @@ jobs:
 
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
-      # Priority: manual input (if present) -> repo variable -> '0'
       WASM_THREADS: ${{ github.event.inputs.wasm_threads || vars.WASM_THREADS || '0' }}
 
     steps:
@@ -137,7 +136,6 @@ jobs:
           echo "Found TH wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
-      # Optional sanity check for TLS symbol in threaded build (kept but fixed)
       - name: Debug: print threaded wasm exports for __wasm_init_tls
         if: ${{ env.WASM_THREADS == '1' }}
         shell: bash
@@ -185,11 +183,9 @@ jobs:
             cp -f dist_wbg_nt/raphael-xiv_bg.wasm dist/
           fi
 
-          # Normalize Trunk's hashed names to our fixed names if present
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
 
-          # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -213,7 +209,6 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Notify on version bump (unchanged) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
