@@ -39,6 +39,7 @@ fn init_wasm_threads() {
 
 // No-op in single-thread builds
 #[cfg(not(all(target_arch = "wasm32", feature = "wasm_threads")))]
+#[allow(dead_code)] 
 fn init_wasm_threads() {}
 
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
