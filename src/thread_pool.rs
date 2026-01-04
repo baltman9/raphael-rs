@@ -36,11 +36,12 @@ fn initialize(num_threads: Option<NonZeroUsize>) {
 
 #[cfg(target_arch = "wasm32")]
 fn initialize(num_threads: Option<NonZeroUsize>) {
-    let num_threads = match num_threads {
-        Some(num_threads) => num_threads,
-        None => default_thread_count(),
-    };
-    let future = wasm_bindgen_futures::JsFuture::from(crate::init_thread_pool(Some(num_threads.get())));
+    let num_threads = num_threads.unwrap_or_else(default_thread_count);
+
+    // wasm-bindgen-rayon::init_thread_pool expects `usize`, not Option<usize>.
+    // It returns a JS Promise; wrap it in JsFuture so we can await it.
+    let future = wasm_bindgen_futures::JsFuture::from(crate::init_thread_pool(num_threads.get()));
+
     wasm_bindgen_futures::spawn_local(async move {
         let result = future.await;
         log::debug!(
@@ -62,8 +63,11 @@ pub fn default_thread_count() -> NonZeroUsize {
 
 #[cfg(target_arch = "wasm32")]
 pub fn default_thread_count() -> NonZeroUsize {
-    let window = web_sys::window().unwrap();
-    let detected = window.navigator().hardware_concurrency() as usize;
+    // Be defensive: window() may be None in some embed contexts.
+    let detected: usize = web_sys::window()
+        .map(|w| w.navigator().hardware_concurrency() as usize)
+        .unwrap_or(4);
+
     // See https://github.com/KonaeAkira/raphael-rs/issues/169
     NonZeroUsize::new((detected / 2).clamp(2, 8)).unwrap()
 }
