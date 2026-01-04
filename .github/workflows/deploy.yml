@@ -161,22 +161,42 @@ jobs:
             echo "Threaded wasm-bindgen succeeded."
           fi
 
-      # ==================== Build HTML without Trunk compiling Rust ====================
+      # ==================== Prepare CI HTML & loader ====================
       - name: Prepare CI HTML (strip data-trunk & inject loader)
         shell: bash
         run: |
           set -euo pipefail
-          cp index.html index.ci.html
-          # Strip any Trunk rust hooks to prevent a second wasm-bindgen run
-          sed -i '/data-trunk/d' index.ci.html
 
-          # Create a tiny module loader that calls the wasm-bindgen init we just produced
+          # Base HTML -> CI HTML
+          cp index.html index.ci.html 2>/dev/null || true
+
+          # If no base HTML existed, create a minimal one.
+          if [ ! -f index.ci.html ]; then
+            cat > index.ci.html <<'HTML'
+          <!doctype html>
+          <html>
+            <head>
+              <meta charset="utf-8"/>
+              <meta name="viewport" content="width=device-width,initial-scale=1"/>
+              <title>Raphael XIV</title>
+            </head>
+            <body>
+              <div id="the_canvas_id"></div>
+            </body>
+          </html>
+          HTML
+          fi
+
+          # Remove Trunk hooks so Trunk won't try to compile Rust (we won't run Trunk at all now).
+          sed -i '/data-trunk/d' index.ci.html || true
+
+          # A tiny loader that initializes the bindgen JS.
           cat > loader.js <<'JS'
           import init from './raphael-xiv.js';
           init();
           JS
 
-          # Insert the <script type="module" src="./loader.js"> before </body> (or append if not present)
+          # Insert the loader before </body> (or append if no body tag).
           if grep -qi '</body>' index.ci.html; then
             awk 'BEGIN{IGNORECASE=1}
                  /<\/body>/{print "<script type=\"module\" src=\"./loader.js\"></script>"; print; next}
@@ -185,21 +205,15 @@ jobs:
             echo '<script type="module" src="./loader.js"></script>' >> index.ci.html
           fi
 
-      - name: Build HTML/assets with Trunk (static only)
-        run: |
-          trunk build index.ci.html --release --dist dist_trunk
-
-      # ==================== Assemble final site ====================
-      - name: Assemble final dist (select correct wasm/js)
+      # ==================== Manually assemble final site (no Trunk) ====================
+      - name: Assemble final dist (no Trunk)
         shell: bash
         run: |
           set -euo pipefail
-          rsync -a dist_trunk/ dist/
+          rm -rf dist
+          mkdir -p dist
 
-          # Copy the loader (Trunk copies it already, but ensure present)
-          cp -f loader.js dist/ || true
-
-          # Prefer threaded bundle only if bindgen succeeded and files exist
+          # Choose which wasm/js bundle to ship
           if [ "${WASM_THREADS}" = "1" ] && [ -z "${TH_FAILED:-}" ] && [ -f dist_wbg_th/raphael-xiv_bg.wasm ]; then
             echo "Packaging THREADED build"
             cp -f dist_wbg_th/raphael-xiv.js dist/
@@ -210,10 +224,18 @@ jobs:
             cp -f dist_wbg_nt/raphael-xiv_bg.wasm dist/
           fi
 
-          # Normalize hashed names if any, then make CI html the index
-          sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.ci.html || true
-          sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.ci.html || true
-          mv -f dist/index.ci.html dist/index.html
+          # Copy CI HTML and loader
+          cp -f index.ci.html dist/index.html
+          cp -f loader.js dist/
+
+          # Copy common static assets if present
+          [ -d assets ] && rsync -a assets/ dist/assets/
+          [ -d static ] && rsync -a static/ dist/static/
+          [ -d public ] && rsync -a public/ dist/public/
+          # Root-level typical assets
+          for f in favicon.ico favicon.png favicon.svg robots.txt sitemap.xml *.css; do
+            [ -e "$f" ] && cp -f "$f" dist/ || true
+          done
 
           # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
@@ -302,7 +324,7 @@ jobs:
         if: ${{ failure() }}
         shell: bash
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DIRECTCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           set -e
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
