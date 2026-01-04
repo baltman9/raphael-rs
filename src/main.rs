@@ -3,18 +3,23 @@
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
 #![cfg_attr(all(target_arch = "wasm32", feature = "wasm_threads"), feature(thread_local))]
 
-// Only compile TLS anchor when the `wasm_threads` feature is enabled
+// ── TLS anchor only when the `wasm_threads` feature is enabled ───────────────────
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 #[thread_local]
 static TLS_ANCHOR: u8 = 0;
 
+// ── Threaded-wasm initializer (non-async; we do not await a JS Promise) ─────────
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
-async fn init_wasm_threads() {
-    // Pick a sane worker count from the browser if available
-    let workers = web_sys::window()
-        .and_then(|w| Some(w.navigator().hardware_concurrency()))
-        .unwrap_or(4)
-        .max(2) as usize;
+fn init_wasm_threads() {
+    use std::num::NonZeroUsize;
+
+    // Keep types explicit to avoid f64 inference from method overloads.
+    let nav_threads: u32 = web_sys::window()
+        .map(|w| w.navigator().hardware_concurrency())
+        .unwrap_or(4);
+
+    // Pick a conservative worker count. You can tweak this policy freely.
+    let workers: usize = nav_threads.max(2) as usize;
 
     // Touch TLS so rustc/linker keep TLS sections (__wasm_init_tls)
     unsafe {
@@ -22,15 +27,15 @@ async fn init_wasm_threads() {
         core::ptr::read_volatile(p);
     }
 
-    // Start the Rayon worker pool for wasm
-    wasm_bindgen_rayon::init_thread_pool(workers)
-        .await
-        .expect("init wasm thread pool");
+    // Kick off the rayon pool via your crate's helper (non-blocking).
+    raphael_xiv::thread_pool::attempt_initialization(
+        Some(NonZeroUsize::new(workers).unwrap()),
+    );
 }
 
 // No-op in single-thread builds (keeps code paths cleanly compiled out)
 #[cfg(not(all(target_arch = "wasm32", feature = "wasm_threads")))]
-async fn init_wasm_threads() {}
+fn init_wasm_threads() {}
 
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
 fn init_logging() {
@@ -135,8 +140,8 @@ fn main() {
     }
 
     wasm_bindgen_futures::spawn_local(async {
-        // Initializes thread pool when the feature is ON; no-op otherwise
-        init_wasm_threads().await;
+        // Initialize rayon pool when threaded-wasm is enabled; no-op otherwise.
+        init_wasm_threads();
 
         let start_result = eframe::WebRunner::new()
             .start(
