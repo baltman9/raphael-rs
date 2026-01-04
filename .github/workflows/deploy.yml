@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       wasm_threads:
-        description: "Build the optional threaded wasm (CI never ships it)"
+        description: "Build threaded wasm (1) or non-threaded (0)"
         type: choice
         required: false
         options: ["0","1"]
@@ -92,7 +92,7 @@ jobs:
             "${{ steps.wasm_nt.outputs.path }}"
           ls -lah dist_wbg_nt || true
 
-      # ==================== OPTIONALLY BUILD THREADED (NO BINDGEN ON CI) ====================
+      # ==================== OPTIONALLY BUILD THREADED (WITH BINDGEN) ====================
       - name: Configure Cargo for wasm threads (target-scoped flags)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
@@ -108,7 +108,7 @@ jobs:
           EOF
           cat .cargo/config.toml
 
-      - name: Build wasm (THREADED; no bindgen on CI)
+      - name: Build wasm (THREADED)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
           set -euo pipefail
@@ -119,6 +119,54 @@ jobs:
             --target wasm32-unknown-unknown \
             --release
           ls -lah target/th/wasm32-unknown-unknown/release || true
+
+      - name: Locate wasm artifact (THREADED)
+        if: ${{ env.WASM_THREADS == '1' }}
+        id: wasm_th
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lah target/th/wasm32-unknown-unknown/release || true
+          WASM_PATH=$(ls target/th/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
+          if [ -z "${WASM_PATH:-}" ]; then
+            echo "No TH .wasm produced under target/th/wasm32-unknown-unknown/release"
+            exit 1
+          fi
+          echo "Found TH wasm: $WASM_PATH"
+          echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Generate wasm-bindgen (THREADED)
+        if: ${{ env.WASM_THREADS == '1' }}
+        run: |
+          set -euo pipefail
+          rm -rf dist_wbg_th
+          mkdir -p dist_wbg_th
+          wasm-bindgen \
+            --target web \
+            --no-typescript \
+            --out-dir dist_wbg_th \
+            --out-name raphael-xiv \
+            "${{ steps.wasm_th.outputs.path }}"
+          ls -lah dist_wbg_th || true
+
+      - name: Add wasm-bindgen-rayon worker helper (THREADED)
+        if: ${{ env.WASM_THREADS == '1' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Find the helper inside the cargo registry
+          HELPER_PATH="$(ls -1 ~/.cargo/registry/src/*/wasm-bindgen-rayon-*/dist/workerHelpers-no-bundler.js 2>/dev/null | head -n1 || true)"
+          if [ -z "${HELPER_PATH:-}" ]; then
+            echo "::error::Could not find workerHelpers-no-bundler.js in cargo registry."
+            echo "Searched: ~/.cargo/registry/src/*/wasm-bindgen-rayon-*/dist/workerHelpers-no-bundler.js"
+            ls -lah ~/.cargo/registry/src/*/wasm-bindgen-rayon-*/dist/ 2>/dev/null || true
+            exit 1
+          fi
+
+          cp -f "$HELPER_PATH" dist_wbg_th/workerHelpers-no-bundler.js
+          echo "Copied helper to dist_wbg_th:"
+          ls -lah dist_wbg_th | sed -n '1,200p'
 
       # ==================== PREPARE SIMPLE HTML & LOADER (NO TRUNK PIPELINE) ====================
       - name: Prepare CI HTML (strip data-trunk & inject loader)
@@ -159,7 +207,7 @@ jobs:
           fi
 
       # ==================== ASSEMBLE FINAL SITE ====================
-      - name: Assemble final dist (publish full bindgen output)
+      - name: Assemble final dist (threaded if enabled)
         shell: bash
         run: |
           set -euo pipefail
@@ -167,18 +215,18 @@ jobs:
           rm -rf dist
           mkdir -p dist
 
-          # Copy EVERYTHING wasm-bindgen produced (includes snippets/, helper JS, etc.)
-          if [ ! -d dist_wbg_nt ]; then
-            echo "::error::dist_wbg_nt missing; wasm-bindgen step may have failed"
-            ls -lah . || true
-            exit 1
+          if [ "${WASM_THREADS}" = "1" ] && [ -d dist_wbg_th ]; then
+            echo "Assembling THREADED wasm output"
+            rsync -a dist_wbg_th/ dist/
+          else
+            echo "Assembling NON-THREADED wasm output"
+            rsync -a dist_wbg_nt/ dist/
           fi
 
-          echo "Copying full wasm-bindgen output from dist_wbg_nt/ to dist/"
-          rsync -a dist_wbg_nt/ dist/
-          echo "dist/ after rsync:"
+          echo "dist/ contents:"
           ls -lah dist || true
-          [ -d dist/snippets ] && echo "snippets/ present ✅" || echo "snippets/ not present (may be OK depending on build) ⚠️"
+          [ -d dist/snippets ] && echo "snippets/ present ✅" || echo "snippets/ not present (may be OK) ⚠️"
+          [ -f dist/workerHelpers-no-bundler.js ] && echo "workerHelpers-no-bundler.js present ✅" || echo "workerHelpers-no-bundler.js not present"
 
           # Static bits
           cp -f index.ci.html dist/index.html
@@ -192,7 +240,7 @@ jobs:
             [ -e "$f" ] && cp -f "$f" dist/ || true
           done
 
-          # Security & caching headers (COOP/COEP; needed only when you actually use threads, harmless otherwise)
+          # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -206,7 +254,6 @@ jobs:
             Cache-Control: public, max-age=31536000, immutable
             Cross-Origin-Resource-Policy: same-origin
           EOF
-
 
       - name: Publish to Cloudflare Pages
         uses: cloudflare/pages-action@v1
@@ -261,6 +308,7 @@ jobs:
             --arg site "$site" \
             --arg repo "$repo" \
             --arg sha "$sha" \
+            --arg sha_short "${sha:0:7}" \
             '{
               content: "",
               embeds: [{
@@ -270,7 +318,7 @@ jobs:
                 fields: [
                   { "name": "Site",   "value": "<\($site)>", "inline": false },
                   { "name": "Repo",   "value": $repo,        "inline": true  },
-                  { "name": "Commit", "value": "`\($sha)`",  "inline": true  }
+                  { "name": "Commit", "value": "`\($sha)`",  "inline": false }
                 ]
               }]
             }')
