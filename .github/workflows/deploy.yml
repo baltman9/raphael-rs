@@ -273,9 +273,9 @@ jobs:
           cp -f loader.js dist/
 
           [ -d assets ] && rsync -a assets/ dist/assets/
+          [ -d assets/action-icons ] && rsync -a assets/action-icons/ dist/action-icons/
           [ -d static ] && rsync -a static/ dist/static/
           [ -d public ] && rsync -a public/ dist/
-          [ -d assets/action-icons ] && rsync -a assets/action-icons/ dist/action-icons/
           [ -d assets/fonts ] && rsync -a assets/fonts/ dist/fonts/
 
           for f in favicon.ico favicon.png favicon.svg robots.txt sitemap.xml *.css; do
