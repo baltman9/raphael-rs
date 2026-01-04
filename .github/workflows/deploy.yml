@@ -3,7 +3,7 @@ name: Build & Deploy (main -> crafting.bryansmedia.com)
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:        # keep this; shows Run button when available
+  workflow_dispatch:
     inputs:
       wasm_threads:
         description: "Build with WebAssembly threads"
@@ -44,7 +44,57 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
 
-      # Only needed when building with threads
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install trunk & wasm-bindgen
+        run: |
+          cargo install --locked trunk
+          cargo install -f wasm-bindgen-cli --version 0.2.106
+          wasm-bindgen -V
+
+      # ==================== NON-THREADED PIPELINE ====================
+      - name: Build wasm (NON-threaded)
+        if: ${{ env.WASM_THREADS != '1' }}
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR=target/nt \
+          cargo +nightly build --target wasm32-unknown-unknown --release
+
+      - name: Locate wasm artifact (NON-threaded)
+        id: wasm_nt
+        if: ${{ env.WASM_THREADS != '1' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lah target/nt/wasm32-unknown-unknown/release || true
+          WASM_PATH=$(ls target/nt/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
+          if [ -z "${WASM_PATH:-}" ]; then
+            echo "No NT .wasm produced under target/nt/wasm32-unknown-unknown/release"
+            exit 1
+          fi
+          echo "Found NT wasm: $WASM_PATH"
+          echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Generate wasm-bindgen (NON-threaded)
+        if: ${{ env.WASM_THREADS != '1' }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist_wbg_nt
+          wasm-bindgen \
+            --target web \
+            --no-typescript \
+            --out-dir dist_wbg_nt \
+            --out-name raphael-xiv \
+            "${{ steps.wasm_nt.outputs.path }}"
+
+      # ==================== THREADED PIPELINE ====================
       - name: Configure Cargo for wasm threads (target-scoped flags)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
@@ -61,92 +111,69 @@ jobs:
           echo "----- .cargo/config.toml -----"
           cat .cargo/config.toml
 
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install trunk & wasm-bindgen
-        run: |
-          cargo install --locked trunk
-          cargo install -f wasm-bindgen-cli --version 0.2.106
-          wasm-bindgen -V
-
-      # ---------- BUILD ----------
-      - name: Build wasm (NON-threaded)
-        if: ${{ env.WASM_THREADS != '1' }}
-        run: |
-          set -euo pipefail
-          cargo +nightly build --target wasm32-unknown-unknown --release
-
       - name: Build wasm (THREADED)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
           set -euo pipefail
+          CARGO_TARGET_DIR=target/th \
           cargo +nightly build \
             -Z build-std=std,panic_abort \
             --features wasm_threads \
             --target wasm32-unknown-unknown \
             --release
 
-      # ---------- Locate wasm ----------
-      - name: Locate wasm artifact
-        id: wasm
+      - name: Locate wasm artifact (THREADED)
+        id: wasm_th
+        if: ${{ env.WASM_THREADS == '1' }}
         shell: bash
         run: |
           set -euo pipefail
-          ls -lah target/wasm32-unknown-unknown/release || true
-          WASM_PATH=$(ls target/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
+          ls -lah target/th/wasm32-unknown-unknown/release || true
+          WASM_PATH=$(ls target/th/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
           if [ -z "${WASM_PATH:-}" ]; then
-            echo "No .wasm produced under target/wasm32-unknown-unknown/release"
+            echo "No TH .wasm produced under target/th/wasm32-unknown-unknown/release"
             exit 1
           fi
-          echo "Found wasm: $WASM_PATH"
+          echo "Found TH wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
-
-      # ---------- wasm-bindgen ----------
-      - name: Generate wasm-bindgen (NON-threaded)
-        if: ${{ env.WASM_THREADS != '1' }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist_wbg
-          wasm-bindgen \
-            --target web \
-            --no-typescript \
-            --out-dir dist_wbg \
-            --out-name raphael-xiv \
-            "${{ steps.wasm.outputs.path }}"
 
       - name: Generate wasm-bindgen (THREADED)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
           set -euo pipefail
-          mkdir -p dist_wbg
+          mkdir -p dist_wbg_th
+          # wasm-bindgen 0.2.106 detects shared memory automatically
           wasm-bindgen \
             --target web \
             --no-typescript \
-            --out-dir dist_wbg \
+            --out-dir dist_wbg_th \
             --out-name raphael-xiv \
-            "${{ steps.wasm.outputs.path }}"
+            "${{ steps.wasm_th.outputs.path }}"
 
-      # ---------- Static site with Trunk ----------
+      # ==================== Static site with Trunk ====================
       - name: Build HTML/assets with Trunk (no wasm overrides yet)
         run: |
           trunk build index.html --release --dist dist_trunk
 
-      - name: Assemble final dist (wbg output + patched index.html)
+      - name: Assemble final dist (select correct wasm/js)
         shell: bash
         run: |
           set -euo pipefail
           rsync -a dist_trunk/ dist/
-          cp -f dist_wbg/raphael-xiv.js dist/
-          cp -f dist_wbg/raphael-xiv_bg.wasm dist/
+
+          if [ "${WASM_THREADS}" = "1" ] && [ -f dist_wbg_th/raphael-xiv_bg.wasm ]; then
+            cp -f dist_wbg_th/raphael-xiv.js dist/
+            cp -f dist_wbg_th/raphael-xiv_bg.wasm dist/
+          else
+            cp -f dist_wbg_nt/raphael-xiv.js dist/
+            cp -f dist_wbg_nt/raphael-xiv_bg.wasm dist/
+          fi
+
+          # Normalize Trunk's hashed names to our fixed names if present
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
+
+          # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -170,7 +197,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # (version bump + Discord steps unchanged)
+      # --- Notify on version bump (unchanged) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
