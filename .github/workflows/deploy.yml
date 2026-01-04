@@ -274,6 +274,18 @@ jobs:
 
           [ -d assets ] && rsync -a assets/ dist/assets/
           [ -d assets/action-icons ] && rsync -a assets/action-icons/ dist/action-icons/
+         
+          echo "Checking action-icons source + dist..."
+          ls -lah assets/action-icons | head -n 20 || true
+          ls -lah dist/action-icons 2>/dev/null | head -n 20 || true
+          ls -lah dist/action-icons/CUL 2>/dev/null | head -n 20 || true
+
+          # Hard fail if we expect icons but they are missing
+          if [ -d assets/action-icons ] && [ ! -f dist/action-icons/CUL/Groundwork.webp ]; then
+            echo "::error::Expected dist/action-icons/CUL/Groundwork.webp but it is missing"
+            exit 1
+          fi
+          
           [ -d static ] && rsync -a static/ dist/static/
           [ -d public ] && rsync -a public/ dist/
           [ -d assets/fonts ] && rsync -a assets/fonts/ dist/fonts/
