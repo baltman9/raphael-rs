@@ -28,7 +28,6 @@ jobs:
 
     env:
       BASE_URL: "https://crafting.bryansmedia.com"
-      # Pull from workflow_dispatch input when present, otherwise "0"
       WASM_THREADS: ${{ (github.event.inputs.wasm_threads || '0') }}
 
     steps:
@@ -151,14 +150,20 @@ jobs:
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
 
-          # Fallback injector: if the script still isn't referenced, inject it before </body>
+          # Fallback injector: if the script still isn't referenced, inject before </body>
           if ! grep -q "raphael-xiv.js" dist/index.html; then
             echo "Injecting fallback <script> tag for raphael-xiv.js"
-            sed -i '/<\/body>/i \
-<script type="module">\
-import init from "./raphael-xiv.js";\
-init();\
-</script>' dist/index.html
+            tmpfile="$(mktemp)"
+            awk '{
+              print;
+            }
+            /<\/body>/ {
+              print "<script type=\"module\">";
+              print "import init from \"./raphael-xiv.js\";";
+              print "init();";
+              print "</script>";
+            }' dist/index.html > "${tmpfile}"
+            mv "${tmpfile}" dist/index.html
           fi
 
           # Security & caching headers
