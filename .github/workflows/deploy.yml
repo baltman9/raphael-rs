@@ -92,7 +92,6 @@ jobs:
             --out-dir dist_wbg_nt \
             --out-name raphael-xiv \
             "${{ steps.wasm_nt.outputs.path }}"
-          echo "Non-threaded bindgen output:"
           ls -lah dist_wbg_nt || true
 
       # ==================== THREADED PIPELINE ====================
@@ -109,7 +108,6 @@ jobs:
             "-C","link-arg=--max-memory=4294967296",
           ]
           EOF
-          echo "----- .cargo/config.toml -----"
           cat .cargo/config.toml
 
       - name: Build wasm (THREADED)
@@ -139,13 +137,14 @@ jobs:
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Generate wasm-bindgen (THREADED; best-effort with fallback)
+        id: bindgen_th
         if: ${{ env.WASM_THREADS == '1' }}
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist_wbg_th
-
-          set +e
+          # This may fail if __wasm_init_tls is missing; that's OK due to continue-on-error.
           wasm-bindgen \
             --target web \
             --no-typescript \
@@ -153,14 +152,12 @@ jobs:
             --out-dir dist_wbg_th \
             --out-name raphael-xiv \
             "${{ steps.wasm_th.outputs.path }}"
-          rc=$?
-          set -e
-
-          if [ $rc -ne 0 ]; then
-            echo "::warning::Threaded wasm-bindgen failed (likely missing __wasm_init_tls). Falling back to NON-threaded artifact for deploy."
+          status=$?
+          if [ $status -ne 0 ]; then
             echo "TH_FAILED=1" >> "$GITHUB_ENV"
+            echo "Threaded wasm-bindgen failed (missing TLS). Will fall back."
           else
-            echo "Threaded bindgen output:"
+            echo "TH_FAILED=0" >> "$GITHUB_ENV"
             ls -lah dist_wbg_th || true
           fi
 
@@ -189,7 +186,6 @@ jobs:
 
           sed -i '/data-trunk/d' index.ci.html || true
 
-          # Loader always imports the canonical name we will create later.
           cat > loader.js <<'JS'
           import init from './raphael-xiv.js';
           init();
@@ -211,8 +207,6 @@ jobs:
           rm -rf dist
           mkdir -p dist
 
-          # If we're going to use NT bundle but the directory is missing (e.g. threads selected and TH failed),
-          # do an *emergency* non-threaded bindgen right here.
           ensure_nt_bindgen () {
             if [ -d dist_wbg_nt ]; then
               return 0
@@ -238,7 +232,6 @@ jobs:
             ls -lah dist_wbg_nt || true
           }
 
-          # Helper to choose real filenames (hyphen or underscore) and copy to canonical names
           copy_bindgen_outputs () {
             local srcdir="$1"
             local js=""
@@ -258,12 +251,11 @@ jobs:
               return 1
             fi
 
-            # Copy to canonical names expected by loader.js
             cp -f "$srcdir/$js"   dist/raphael-xiv.js
             cp -f "$srcdir/$wasm" dist/raphael-xiv_bg.wasm
           }
 
-          if [ "${WASM_THREADS}" = "1" ] && [ -z "${TH_FAILED:-}" ] && [ -d dist_wbg_th ]; then
+          if [ "${WASM_THREADS}" = "1" ] && [ "${TH_FAILED:-1}" = "0" ] && [ -d dist_wbg_th ]; then
             echo "Packaging THREADED build"
             copy_bindgen_outputs "dist_wbg_th" || {
               echo "::warning::Threaded artifacts missing; falling back to NON-threaded."
@@ -276,11 +268,9 @@ jobs:
             copy_bindgen_outputs "dist_wbg_nt"
           fi
 
-          # Copy CI HTML and loader
           cp -f index.ci.html dist/index.html
           cp -f loader.js dist/
 
-          # Copy common static assets if present
           [ -d assets ] && rsync -a assets/ dist/assets/
           [ -d static ] && rsync -a static/ dist/static/
           [ -d public ] && rsync -a public/ dist/public/
@@ -288,7 +278,6 @@ jobs:
             [ -e "$f" ] && cp -f "$f" dist/ || true
           done
 
-          # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
