@@ -3,6 +3,13 @@
 #![cfg_attr(target_arch = "wasm32", feature(alloc_error_hook))]
 #![cfg_attr(all(target_arch = "wasm32", feature = "wasm_threads"), feature(thread_local))]
 
+// ── TLS anchor only when the `wasm_threads` feature is enabled ───────────────────
+#[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
+#[link_section = ".tdata"]          // ensure this lives in TLS segment
+#[thread_local]
+#[used]                              // never strip; required for wasm-bindgen’s TLS check
+static TLS_ANCHOR: u8 = 0;
+
 // ── Threaded-wasm initializer (non-async; do NOT await a JS Promise) ────────────
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 fn init_wasm_threads() {
@@ -16,7 +23,15 @@ fn init_wasm_threads() {
     // Choose a sane lower bound; cast after the float math
     let workers: usize = nav_threads.max(2.0) as usize;
 
-    // Kick off the rayon pool via crate helper (non-blocking)
+    // Touch both TLS anchors so linker definitely keeps TLS and __wasm_init_tls
+    unsafe {
+        let p: *const u8 = core::ptr::addr_of!(TLS_ANCHOR);
+        core::ptr::read_volatile(p);
+    }
+    // Also touch the lib-level anchor
+    raphael_xiv::touch_tls_anchor();
+
+    // Kick off the rayon pool via your crate helper (non-blocking)
     raphael_xiv::thread_pool::attempt_initialization(
         Some(NonZeroUsize::new(workers.max(1)).unwrap()),
     );
@@ -129,9 +144,6 @@ fn main() {
     }
 
     wasm_bindgen_futures::spawn_local(async {
-        // 👇 Force TLS section to remain so __wasm_init_tls is exported
-        raphael_xiv::ensure_wasm_tls();
-
         // Initialize rayon pool when threaded-wasm is enabled; no-op otherwise.
         init_wasm_threads();
 
