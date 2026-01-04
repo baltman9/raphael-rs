@@ -294,11 +294,14 @@ jobs:
             [ -e "$f" ] && cp -f "$f" dist/ || true
           done
 
-          # Cloudflare Pages rewrites so /action-icons/* works even if icons live under /assets/action-icons/*
-          cat > dist/_redirects <<'EOF'
-          /action-icons/*  /assets/action-icons/:splat  200
-          /fonts/*         /assets/fonts/:splat         200
-          EOF
+          # Cloudflare Pages rewrites: make /action-icons/* resolve to /assets/action-icons/*
+          printf "%s\n" \
+          "/action-icons/*  /assets/action-icons/:splat  200" \
+          "/fonts/*         /assets/fonts/:splat         200" \
+          > dist/_redirects
+
+          echo "=== dist/_redirects ==="
+          cat dist/_redirects
 
           # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
