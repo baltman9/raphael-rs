@@ -15,7 +15,7 @@ static TLS_ANCHOR: u8 = 0;
 // Export a tiny function that touches the TLS symbol. We also call it from init.
 // Exporting helps defeat aggressive dead-code elimination.
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[inline(never)]
 pub extern "C" fn raphael_touch_tls_anchor() {
     unsafe {
