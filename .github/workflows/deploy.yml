@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       wasm_threads:
-        description: "Build with WebAssembly threads"
+        description: "Build the optional threaded wasm (CI never ships it)"
         type: choice
         required: false
         options: ["0","1"]
@@ -58,9 +58,8 @@ jobs:
           cargo install -f wasm-bindgen-cli --version 0.2.106
           wasm-bindgen -V
 
-      # ==================== NON-THREADED PIPELINE ====================
+      # ==================== ALWAYS BUILD NON-THREADED & BINDGEN IT ====================
       - name: Build wasm (NON-threaded)
-        if: ${{ env.WASM_THREADS != '1' }}
         run: |
           set -euo pipefail
           CARGO_TARGET_DIR=target/nt \
@@ -68,7 +67,6 @@ jobs:
 
       - name: Locate wasm artifact (NON-threaded)
         id: wasm_nt
-        if: ${{ env.WASM_THREADS != '1' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -82,9 +80,9 @@ jobs:
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Generate wasm-bindgen (NON-threaded)
-        if: ${{ env.WASM_THREADS != '1' }}
         run: |
           set -euo pipefail
+          rm -rf dist_wbg_nt
           mkdir -p dist_wbg_nt
           wasm-bindgen \
             --target web \
@@ -94,7 +92,7 @@ jobs:
             "${{ steps.wasm_nt.outputs.path }}"
           ls -lah dist_wbg_nt || true
 
-      # ==================== THREADED PIPELINE ====================
+      # ==================== OPTIONALLY BUILD THREADED (NO BINDGEN ON CI) ====================
       - name: Configure Cargo for wasm threads (target-scoped flags)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
@@ -110,7 +108,7 @@ jobs:
           EOF
           cat .cargo/config.toml
 
-      - name: Build wasm (THREADED)
+      - name: Build wasm (THREADED; no bindgen on CI)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
           set -euo pipefail
@@ -120,48 +118,9 @@ jobs:
             --features wasm_threads \
             --target wasm32-unknown-unknown \
             --release
-
-      - name: Locate wasm artifact (THREADED)
-        id: wasm_th
-        if: ${{ env.WASM_THREADS == '1' }}
-        shell: bash
-        run: |
-          set -euo pipefail
           ls -lah target/th/wasm32-unknown-unknown/release || true
-          WASM_PATH=$(ls target/th/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
-          if [ -z "${WASM_PATH:-}" ]; then
-            echo "No TH .wasm produced under target/th/wasm32-unknown-unknown/release"
-            exit 1
-          fi
-          echo "Found TH wasm: $WASM_PATH"
-          echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
-      - name: Generate wasm-bindgen (THREADED; best-effort with fallback)
-        id: bindgen_th
-        if: ${{ env.WASM_THREADS == '1' }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist_wbg_th
-          # This may fail if __wasm_init_tls is missing; that's OK due to continue-on-error.
-          wasm-bindgen \
-            --target web \
-            --no-typescript \
-            --enable-threads \
-            --out-dir dist_wbg_th \
-            --out-name raphael-xiv \
-            "${{ steps.wasm_th.outputs.path }}"
-          status=$?
-          if [ $status -ne 0 ]; then
-            echo "TH_FAILED=1" >> "$GITHUB_ENV"
-            echo "Threaded wasm-bindgen failed (missing TLS). Will fall back."
-          else
-            echo "TH_FAILED=0" >> "$GITHUB_ENV"
-            ls -lah dist_wbg_th || true
-          fi
-
-      # ==================== Prepare CI HTML & loader ====================
+      # ==================== PREPARE SIMPLE HTML & LOADER (NO TRUNK PIPELINE) ====================
       - name: Prepare CI HTML (strip data-trunk & inject loader)
         shell: bash
         run: |
@@ -199,7 +158,7 @@ jobs:
             echo '<script type="module" src="./loader.js"></script>' >> index.ci.html
           fi
 
-      # ==================== Manually assemble final site (no Trunk) ====================
+      # ==================== ASSEMBLE FINAL SITE ====================
       - name: Assemble final dist (no Trunk)
         shell: bash
         run: |
@@ -207,70 +166,26 @@ jobs:
           rm -rf dist
           mkdir -p dist
 
-          ensure_nt_bindgen () {
-            if [ -d dist_wbg_nt ]; then
-              return 0
-            fi
-            echo "::warning::dist_wbg_nt missing; attempting emergency non-threaded bindgen."
-            NT_WASM="${{ steps.wasm_nt.outputs.path }}"
-            if [ -z "${NT_WASM}" ] || [ ! -f "${NT_WASM}" ]; then
-              echo "::warning::No recorded NT wasm path; rebuilding quickly."
-              CARGO_TARGET_DIR=target/nt cargo +nightly build --target wasm32-unknown-unknown --release
-              NT_WASM=$(ls target/nt/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
-              if [ -z "${NT_WASM}" ]; then
-                echo "::error::Could not locate a non-threaded wasm to bindgen."
-                exit 1
-              fi
-            fi
-            mkdir -p dist_wbg_nt
-            wasm-bindgen \
-              --target web \
-              --no-typescript \
-              --out-dir dist_wbg_nt \
-              --out-name raphael-xiv \
-              "${NT_WASM}"
-            ls -lah dist_wbg_nt || true
-          }
-
-          copy_bindgen_outputs () {
-            local srcdir="$1"
-            local js=""
-            local wasm=""
-
-            if   [ -f "$srcdir/raphael-xiv.js" ]; then js="raphael-xiv.js"
-            elif [ -f "$srcdir/raphael_xiv.js" ]; then js="raphael_xiv.js"
-            fi
-
-            if   [ -f "$srcdir/raphael-xiv_bg.wasm" ]; then wasm="raphael-xiv_bg.wasm"
-            elif [ -f "$srcdir/raphael_xiv_bg.wasm" ]; then wasm="raphael_xiv_bg.wasm"
-            fi
-
-            if [ -z "$js" ] || [ -z "$wasm" ]; then
-              echo "Bindgen artifacts not found in $srcdir"
-              ls -lah "$srcdir" || true
-              return 1
-            fi
-
-            cp -f "$srcdir/$js"   dist/raphael-xiv.js
-            cp -f "$srcdir/$wasm" dist/raphael-xiv_bg.wasm
-          }
-
-          if [ "${WASM_THREADS}" = "1" ] && [ "${TH_FAILED:-1}" = "0" ] && [ -d dist_wbg_th ]; then
-            echo "Packaging THREADED build"
-            copy_bindgen_outputs "dist_wbg_th" || {
-              echo "::warning::Threaded artifacts missing; falling back to NON-threaded."
-              ensure_nt_bindgen
-              copy_bindgen_outputs "dist_wbg_nt"
-            }
-          else
-            echo "Packaging NON-THREADED build"
-            ensure_nt_bindgen
-            copy_bindgen_outputs "dist_wbg_nt"
+          # Copy NON-threaded bindgen outputs (always present)
+          JS_SRC=""
+          WASM_SRC=""
+          if   [ -f dist_wbg_nt/raphael-xiv.js ]; then JS_SRC="dist_wbg_nt/raphael-xiv.js"
+          elif [ -f dist_wbg_nt/raphael_xiv.js ]; then JS_SRC="dist_wbg_nt/raphael_xiv.js"
           fi
+          if   [ -f dist_wbg_nt/raphael-xiv_bg.wasm ]; then WASM_SRC="dist_wbg_nt/raphael-xiv_bg.wasm"
+          elif [ -f dist_wbg_nt/raphael_xiv_bg.wasm ]; then WASM_SRC="dist_wbg_nt/raphael_xiv_bg.wasm"
+          fi
+          if [ -z "$JS_SRC" ] || [ -z "$WASM_SRC" ]; then
+            echo "::error::Bindgen artifacts missing in dist_wbg_nt"
+            ls -lah dist_wbg_nt || true
+            exit 1
+          fi
+          cp -f "$JS_SRC"   dist/raphael-xiv.js
+          cp -f "$WASM_SRC" dist/raphael-xiv_bg.wasm
 
+          # Static bits
           cp -f index.ci.html dist/index.html
           cp -f loader.js dist/
-
           [ -d assets ] && rsync -a assets/ dist/assets/
           [ -d static ] && rsync -a static/ dist/static/
           [ -d public ] && rsync -a public/ dist/public/
@@ -278,6 +193,7 @@ jobs:
             [ -e "$f" ] && cp -f "$f" dist/ || true
           done
 
+          # Security & caching headers (COOP/COEP; needed only when you actually use threads, harmless otherwise)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
