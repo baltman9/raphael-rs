@@ -137,9 +137,10 @@ jobs:
           echo "Found TH wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
-      # ---- NEW: verify TLS init symbol exists before wasm-bindgen
+      # Optional sanity check for TLS symbol in threaded build (kept but fixed)
       - name: Debug: print threaded wasm exports for __wasm_init_tls
         if: ${{ env.WASM_THREADS == '1' }}
+        shell: bash
         run: |
           set -euo pipefail
           cargo install --locked wasm-tools
@@ -158,7 +159,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist_wbg_th
-          # wasm-bindgen 0.2.106 detects shared memory automatically
           wasm-bindgen \
             --target web \
             --no-typescript \
