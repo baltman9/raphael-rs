@@ -127,14 +127,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ls -lah target/th/wasm32-unknown-unknown/release || true
-          WASM_PATH=$(ls target/th/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
+          dir="target/th/wasm32-unknown-unknown/release"
+          echo "Listing $dir"; ls -lah "$dir" || true
+
+          # Prefer the final binary artifact by name
+          candidates=(
+            "$dir/raphael_xiv.wasm"
+            "$dir/raphael-xiv.wasm"
+          )
+
+          WASM_PATH=""
+          for f in "${candidates[@]}"; do
+            if [ -f "$f" ]; then WASM_PATH="$f"; break; fi
+          done
+
           if [ -z "${WASM_PATH:-}" ]; then
-            echo "No TH .wasm produced under target/th/wasm32-unknown-unknown/release"
+            echo "::error::Could not find raphael_xiv*.wasm under $dir"
             exit 1
           fi
-          echo "Found TH wasm: $WASM_PATH"
+
+          echo "Selected threaded wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Sanity check TLS export (__wasm_init_tls) on THREADED wasm
+        if: ${{ env.WASM_THREADS == '1' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked wasm-tools
+          echo "Checking exports of: ${{ steps.wasm_th.outputs.path }}"
+          if wasm-tools objdump -x "${{ steps.wasm_th.outputs.path }}" | grep -q __wasm_init_tls; then
+            echo "__wasm_init_tls present ✅"
+          else
+            echo "::error::__wasm_init_tls NOT found on selected wasm (threads/TLS missing)."
+            exit 2
+          fi
 
       - name: Generate wasm-bindgen (THREADED)
         if: ${{ env.WASM_THREADS == '1' }}
