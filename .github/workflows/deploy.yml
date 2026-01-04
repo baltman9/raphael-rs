@@ -220,8 +220,22 @@ jobs:
           sed -i '/data-trunk/d' index.ci.html || true
 
           cat > loader.js <<'JS'
-          import init from './raphael-xiv.js';
-          init();
+          import init, { initThreadPool } from './raphael-xiv.js';
+
+          async function boot() {
+            await init();
+
+            // Attempt to init rayon thread pool (works only on threaded builds + COOP/COEP)
+            try {
+              const n = navigator.hardwareConcurrency || 4;
+              await initThreadPool(n);
+              console.log("Rayon thread pool initialized:", n);
+            } catch (e) {
+              console.warn("Rayon thread pool init failed (likely non-threaded build or missing isolation):", e);
+            }
+          }
+
+          boot();
           JS
 
           if grep -qi '</body>' index.ci.html; then
