@@ -136,17 +136,31 @@ jobs:
           echo "Found TH wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
-      - name: Generate wasm-bindgen (THREADED)
+      # Best-effort threaded bindgen; fall back (do NOT fail job)
+      - name: Generate wasm-bindgen (THREADED; best-effort with fallback)
         if: ${{ env.WASM_THREADS == '1' }}
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist_wbg_th
+
+          set +e
           wasm-bindgen \
             --target web \
             --no-typescript \
+            --enable-threads \
             --out-dir dist_wbg_th \
             --out-name raphael-xiv \
             "${{ steps.wasm_th.outputs.path }}"
+          rc=$?
+          set -e
+
+          if [ $rc -ne 0 ]; then
+            echo "::warning::Threaded wasm-bindgen failed (likely missing __wasm_init_tls). Falling back to NON-threaded artifact for deploy."
+            echo "TH_FAILED=1" >> "$GITHUB_ENV"
+          else
+            echo "Threaded wasm-bindgen succeeded."
+          fi
 
       # ==================== Static site with Trunk ====================
       - name: Build HTML/assets with Trunk (no wasm overrides yet)
@@ -159,17 +173,22 @@ jobs:
           set -euo pipefail
           rsync -a dist_trunk/ dist/
 
-          if [ "${WASM_THREADS}" = "1" ] && [ -f dist_wbg_th/raphael-xiv_bg.wasm ]; then
+          # Prefer threaded bundle only if bindgen succeeded and files exist
+          if [ "${WASM_THREADS}" = "1" ] && [ -z "${TH_FAILED:-}" ] && [ -f dist_wbg_th/raphael-xiv_bg.wasm ]; then
+            echo "Packaging THREADED build"
             cp -f dist_wbg_th/raphael-xiv.js dist/
             cp -f dist_wbg_th/raphael-xiv_bg.wasm dist/
           else
+            echo "Packaging NON-THREADED build"
             cp -f dist_wbg_nt/raphael-xiv.js dist/
             cp -f dist_wbg_nt/raphael-xiv_bg.wasm dist/
           fi
 
+          # Normalize Trunk's hashed names to fixed names (defensive)
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
 
+          # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
           /*
             Cross-Origin-Opener-Policy: same-origin
@@ -193,6 +212,7 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
+      # --- Notify on version bump (unchanged) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
