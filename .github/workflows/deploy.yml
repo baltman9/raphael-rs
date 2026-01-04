@@ -161,33 +161,29 @@ jobs:
             echo "Threaded wasm-bindgen succeeded."
           fi
 
-      # ==================== Build HTML without invoking Trunk's Rust pipeline ====================
-      - name: Prepare CI HTML (strip data-trunk & inject our loader)
+      # ==================== Build HTML without Trunk compiling Rust ====================
+      - name: Prepare CI HTML (strip data-trunk & inject loader)
         shell: bash
         run: |
           set -euo pipefail
-          # Base file can be 'index.html' at repo root. Produce a CI-only variant.
           cp index.html index.ci.html
-
-          # Remove any Trunk Rust tags to prevent Trunk from compiling & running wasm-bindgen.
-          # This removes lines that contain data-trunk (e.g., <link data-trunk rel="rust" ...>).
+          # Strip any Trunk rust hooks to prevent a second wasm-bindgen run
           sed -i '/data-trunk/d' index.ci.html
 
-          # Inject a minimal module loader before </body>. We rely on wasm-bindgen's default export.
-          python3 - <<'PY'
-import io,sys,re
-p='index.ci.html'
-s=open(p,'r',encoding='utf-8').read()
-loader = """
-<script type="module">
-  import init from './raphael-xiv.js';
-  init();
-</script>
-""".strip()
-s = re.sub(r'</body>', loader + '\n</body>', s, flags=re.IGNORECASE) if '</body>' in s.lower() else (s + '\n' + loader + '\n')
-open(p,'w',encoding='utf-8').write(s)
-print('Injected loader into index.ci.html')
-PY
+          # Create a tiny module loader that calls the wasm-bindgen init we just produced
+          cat > loader.js <<'JS'
+          import init from './raphael-xiv.js';
+          init();
+          JS
+
+          # Insert the <script type="module" src="./loader.js"> before </body> (or append if not present)
+          if grep -qi '</body>' index.ci.html; then
+            awk 'BEGIN{IGNORECASE=1}
+                 /<\/body>/{print "<script type=\"module\" src=\"./loader.js\"></script>"; print; next}
+                 {print}' index.ci.html > index.tmp && mv index.tmp index.ci.html
+          else
+            echo '<script type="module" src="./loader.js"></script>' >> index.ci.html
+          fi
 
       - name: Build HTML/assets with Trunk (static only)
         run: |
@@ -200,6 +196,9 @@ PY
           set -euo pipefail
           rsync -a dist_trunk/ dist/
 
+          # Copy the loader (Trunk copies it already, but ensure present)
+          cp -f loader.js dist/ || true
+
           # Prefer threaded bundle only if bindgen succeeded and files exist
           if [ "${WASM_THREADS}" = "1" ] && [ -z "${TH_FAILED:-}" ] && [ -f dist_wbg_th/raphael-xiv_bg.wasm ]; then
             echo "Packaging THREADED build"
@@ -211,11 +210,9 @@ PY
             cp -f dist_wbg_nt/raphael-xiv_bg.wasm dist/
           fi
 
-          # If your original index had hashed asset names, normalize just in case (harmless if absent).
+          # Normalize hashed names if any, then make CI html the index
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.ci.html || true
           sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.ci.html || true
-
-          # Serve the CI HTML as index.html in the final dist.
           mv -f dist/index.ci.html dist/index.html
 
           # Security & caching headers (COOP/COEP required for threads)
@@ -305,7 +302,7 @@ PY
         if: ${{ failure() }}
         shell: bash
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DIRECTCORD_WEBHOOK }}
         run: |
           set -e
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
