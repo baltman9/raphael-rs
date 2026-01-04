@@ -137,6 +137,22 @@ jobs:
           echo "Found TH wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
+      # ---- NEW: verify TLS init symbol exists before wasm-bindgen
+      - name: Debug: print threaded wasm exports for __wasm_init_tls
+        if: ${{ env.WASM_THREADS == '1' }}
+        run: |
+          set -euo pipefail
+          cargo install --locked wasm-tools
+          echo "Checking exports of: ${{ steps.wasm_th.outputs.path }}"
+          wasm-tools objdump -x "${{ steps.wasm_th.outputs.path }}" | head -n 300 || true
+          echo "grep for __wasm_init_tls:"
+          if wasm-tools objdump -x "${{ steps.wasm_th.outputs.path }}" | grep -q __wasm_init_tls; then
+            echo "__wasm_init_tls present ✅"
+          else
+            echo "__wasm_init_tls NOT found ❌"
+            exit 2
+          fi
+
       - name: Generate wasm-bindgen (THREADED)
         if: ${{ env.WASM_THREADS == '1' }}
         run: |
