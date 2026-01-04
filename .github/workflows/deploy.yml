@@ -104,9 +104,11 @@ jobs:
             "-C","link-arg=--shared-memory",
             "-C","link-arg=--import-memory",
             "-C","link-arg=--max-memory=4294967296",
+            "-C","link-arg=--export=__wasm_init_tls",
           ]
           EOF
           cat .cargo/config.toml
+
 
       - name: Build wasm (THREADED)
         if: ${{ env.WASM_THREADS == '1' }}
