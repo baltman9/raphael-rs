@@ -211,6 +211,33 @@ jobs:
           rm -rf dist
           mkdir -p dist
 
+          # If we're going to use NT bundle but the directory is missing (e.g. threads selected and TH failed),
+          # do an *emergency* non-threaded bindgen right here.
+          ensure_nt_bindgen () {
+            if [ -d dist_wbg_nt ]; then
+              return 0
+            fi
+            echo "::warning::dist_wbg_nt missing; attempting emergency non-threaded bindgen."
+            NT_WASM="${{ steps.wasm_nt.outputs.path }}"
+            if [ -z "${NT_WASM}" ] || [ ! -f "${NT_WASM}" ]; then
+              echo "::warning::No recorded NT wasm path; rebuilding quickly."
+              CARGO_TARGET_DIR=target/nt cargo +nightly build --target wasm32-unknown-unknown --release
+              NT_WASM=$(ls target/nt/wasm32-unknown-unknown/release/*.wasm | head -n1 || true)
+              if [ -z "${NT_WASM}" ]; then
+                echo "::error::Could not locate a non-threaded wasm to bindgen."
+                exit 1
+              fi
+            fi
+            mkdir -p dist_wbg_nt
+            wasm-bindgen \
+              --target web \
+              --no-typescript \
+              --out-dir dist_wbg_nt \
+              --out-name raphael-xiv \
+              "${NT_WASM}"
+            ls -lah dist_wbg_nt || true
+          }
+
           # Helper to choose real filenames (hyphen or underscore) and copy to canonical names
           copy_bindgen_outputs () {
             local srcdir="$1"
@@ -240,10 +267,12 @@ jobs:
             echo "Packaging THREADED build"
             copy_bindgen_outputs "dist_wbg_th" || {
               echo "::warning::Threaded artifacts missing; falling back to NON-threaded."
+              ensure_nt_bindgen
               copy_bindgen_outputs "dist_wbg_nt"
             }
           else
             echo "Packaging NON-THREADED build"
+            ensure_nt_bindgen
             copy_bindgen_outputs "dist_wbg_nt"
           fi
 
