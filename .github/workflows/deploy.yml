@@ -274,7 +274,7 @@ jobs:
 
           [ -d assets ] && rsync -a assets/ dist/assets/
           [ -d static ] && rsync -a static/ dist/static/
-          [ -d public ] && rsync -a public/ dist/public/
+          [ -d public ] && rsync -a public/ dist/
 
           for f in favicon.ico favicon.png favicon.svg robots.txt sitemap.xml *.css; do
             [ -e "$f" ] && cp -f "$f" dist/ || true
