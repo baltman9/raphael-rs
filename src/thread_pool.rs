@@ -38,9 +38,8 @@ fn initialize(num_threads: Option<NonZeroUsize>) {
 fn initialize(num_threads: Option<NonZeroUsize>) {
     let num_threads = num_threads.unwrap_or_else(default_thread_count);
 
-    // Start the Rayon pool for wasm (returns a Promise)
-    let promise = wasm_bindgen_rayon::init_thread_pool(num_threads.get());
-    let future = wasm_bindgen_futures::JsFuture::from(promise);
+    // NOTE: crate::init_thread_pool should take a `usize` and return `js_sys::Promise`.
+    let future = wasm_bindgen_futures::JsFuture::from(crate::init_thread_pool(num_threads.get()));
 
     wasm_bindgen_futures::spawn_local(async move {
         let result = future.await;
@@ -55,9 +54,8 @@ fn initialize(num_threads: Option<NonZeroUsize>) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn default_thread_count() -> NonZeroUsize {
-    // Use `map_or_else` so both branches are closures (fixes arity warning)
-    std::thread::available_parallelism().map_or_else(
-        || NonZeroUsize::new(4).unwrap(),
+    std::thread::available_parallelism().map_or(
+        NonZeroUsize::new(4).unwrap(),
         |detected| {
             let num_threads = std::cmp::max(2, detected.get() / 2);
             NonZeroUsize::new(num_threads).unwrap()
@@ -67,13 +65,17 @@ pub fn default_thread_count() -> NonZeroUsize {
 
 #[cfg(target_arch = "wasm32")]
 pub fn default_thread_count() -> NonZeroUsize {
-    // Navigator reports u32; clamp a sane range and ensure nonzero
-    let detected = web_sys::window()
+    // Navigator::hardware_concurrency() is u32 in web-sys; stay with integers
+    let detected_u32: u32 = web_sys::window()
         .map(|w| w.navigator().hardware_concurrency())
         .unwrap_or(4);
 
-    let n = ((detected as usize) / 2).clamp(2, 8);
-    NonZeroUsize::new(n).unwrap()
+    // Convert to usize safely and clamp to a reasonable range [2..=8]
+    let detected = usize::try_from(detected_u32).unwrap_or(4);
+    let threads = detected.saturating_div(2).clamp(2, 8);
+
+    // Safe to unwrap because threads >= 2
+    NonZeroUsize::new(threads).unwrap()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
