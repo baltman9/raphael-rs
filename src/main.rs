@@ -4,36 +4,47 @@
 #![cfg_attr(all(target_arch = "wasm32", feature = "wasm_threads"), feature(thread_local))]
 
 // ── TLS anchor only when the `wasm_threads` feature is enabled ───────────────────
+// `#[used]` makes sure the symbol is retained even if not referenced by name after LTO.
+// `#[thread_local]` makes rustc emit thread-local sections, which in turn triggers
+// the `__wasm_init_tls` machinery that wasm-bindgen checks for.
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
+#[used]
 #[thread_local]
 static TLS_ANCHOR: u8 = 0;
+
+// Export a tiny function that touches the TLS symbol. We also call it from init.
+// Exporting helps defeat aggressive dead-code elimination.
+#[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn raphael_touch_tls_anchor() {
+    unsafe {
+        let p: *const u8 = core::ptr::addr_of!(TLS_ANCHOR);
+        core::ptr::read_volatile(p);
+    }
+}
 
 // ── Threaded-wasm initializer (non-async; do NOT await a JS Promise) ────────────
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 fn init_wasm_threads() {
     use std::num::NonZeroUsize;
 
-    // hardwareConcurrency is a JS number → f64 in web-sys
     let nav_threads: f64 = web_sys::window()
         .map(|w| w.navigator().hardware_concurrency())
         .unwrap_or(4.0);
 
-    // Choose a sane lower bound; cast after the float math
     let workers: usize = nav_threads.max(2.0) as usize;
 
-    // Touch TLS so rustc/linker keep TLS sections (__wasm_init_tls)
-    unsafe {
-        let p: *const u8 = core::ptr::addr_of!(TLS_ANCHOR);
-        core::ptr::read_volatile(p);
-    }
+    // Touch the TLS anchor explicitly and via exported symbol.
+    raphael_touch_tls_anchor();
 
-    // Kick off the rayon pool via your crate helper (non-blocking)
+    // Initialize the rayon worker pool (non-blocking).
     raphael_xiv::thread_pool::attempt_initialization(
         Some(NonZeroUsize::new(workers.max(1)).unwrap()),
     );
 }
 
-// No-op in single-thread builds (keeps code paths cleanly compiled out)
+// No-op in single-thread builds
 #[cfg(not(all(target_arch = "wasm32", feature = "wasm_threads")))]
 #[allow(dead_code)]
 fn init_wasm_threads() {}
