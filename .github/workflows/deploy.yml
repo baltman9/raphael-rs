@@ -92,6 +92,8 @@ jobs:
             --out-dir dist_wbg_nt \
             --out-name raphael-xiv \
             "${{ steps.wasm_nt.outputs.path }}"
+          echo "Non-threaded bindgen output:"
+          ls -lah dist_wbg_nt || true
 
       # ==================== THREADED PIPELINE ====================
       - name: Configure Cargo for wasm threads (target-scoped flags)
@@ -158,7 +160,8 @@ jobs:
             echo "::warning::Threaded wasm-bindgen failed (likely missing __wasm_init_tls). Falling back to NON-threaded artifact for deploy."
             echo "TH_FAILED=1" >> "$GITHUB_ENV"
           else
-            echo "Threaded wasm-bindgen succeeded."
+            echo "Threaded bindgen output:"
+            ls -lah dist_wbg_th || true
           fi
 
       # ==================== Prepare CI HTML & loader ====================
@@ -167,10 +170,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Base HTML -> CI HTML
           cp index.html index.ci.html 2>/dev/null || true
-
-          # If no base HTML existed, create a minimal one.
           if [ ! -f index.ci.html ]; then
             cat > index.ci.html <<'HTML'
           <!doctype html>
@@ -187,16 +187,14 @@ jobs:
           HTML
           fi
 
-          # Remove Trunk hooks so Trunk won't try to compile Rust (we won't run Trunk at all now).
           sed -i '/data-trunk/d' index.ci.html || true
 
-          # A tiny loader that initializes the bindgen JS.
+          # Loader always imports the canonical name we will create later.
           cat > loader.js <<'JS'
           import init from './raphael-xiv.js';
           init();
           JS
 
-          # Insert the loader before </body> (or append if no body tag).
           if grep -qi '</body>' index.ci.html; then
             awk 'BEGIN{IGNORECASE=1}
                  /<\/body>/{print "<script type=\"module\" src=\"./loader.js\"></script>"; print; next}
@@ -213,15 +211,40 @@ jobs:
           rm -rf dist
           mkdir -p dist
 
-          # Choose which wasm/js bundle to ship
-          if [ "${WASM_THREADS}" = "1" ] && [ -z "${TH_FAILED:-}" ] && [ -f dist_wbg_th/raphael-xiv_bg.wasm ]; then
+          # Helper to choose real filenames (hyphen or underscore) and copy to canonical names
+          copy_bindgen_outputs () {
+            local srcdir="$1"
+            local js=""
+            local wasm=""
+
+            if   [ -f "$srcdir/raphael-xiv.js" ]; then js="raphael-xiv.js"
+            elif [ -f "$srcdir/raphael_xiv.js" ]; then js="raphael_xiv.js"
+            fi
+
+            if   [ -f "$srcdir/raphael-xiv_bg.wasm" ]; then wasm="raphael-xiv_bg.wasm"
+            elif [ -f "$srcdir/raphael_xiv_bg.wasm" ]; then wasm="raphael_xiv_bg.wasm"
+            fi
+
+            if [ -z "$js" ] || [ -z "$wasm" ]; then
+              echo "Bindgen artifacts not found in $srcdir"
+              ls -lah "$srcdir" || true
+              return 1
+            fi
+
+            # Copy to canonical names expected by loader.js
+            cp -f "$srcdir/$js"   dist/raphael-xiv.js
+            cp -f "$srcdir/$wasm" dist/raphael-xiv_bg.wasm
+          }
+
+          if [ "${WASM_THREADS}" = "1" ] && [ -z "${TH_FAILED:-}" ] && [ -d dist_wbg_th ]; then
             echo "Packaging THREADED build"
-            cp -f dist_wbg_th/raphael-xiv.js dist/
-            cp -f dist_wbg_th/raphael-xiv_bg.wasm dist/
+            copy_bindgen_outputs "dist_wbg_th" || {
+              echo "::warning::Threaded artifacts missing; falling back to NON-threaded."
+              copy_bindgen_outputs "dist_wbg_nt"
+            }
           else
             echo "Packaging NON-THREADED build"
-            cp -f dist_wbg_nt/raphael-xiv.js dist/
-            cp -f dist_wbg_nt/raphael-xiv_bg.wasm dist/
+            copy_bindgen_outputs "dist_wbg_nt"
           fi
 
           # Copy CI HTML and loader
@@ -232,7 +255,6 @@ jobs:
           [ -d assets ] && rsync -a assets/ dist/assets/
           [ -d static ] && rsync -a static/ dist/static/
           [ -d public ] && rsync -a public/ dist/public/
-          # Root-level typical assets
           for f in favicon.ico favicon.png favicon.svg robots.txt sitemap.xml *.css; do
             [ -e "$f" ] && cp -f "$f" dist/ || true
           done
