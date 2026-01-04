@@ -4,7 +4,7 @@ pub use wasm_bindgen_rayon::init_thread_pool;
 
 // Threads OFF: provide a no-op Promise
 #[cfg(all(target_arch = "wasm32", not(feature = "wasm_threads")))]
-pub fn init_thread_pool(_pool_size: Option<usize>) -> js_sys::Promise {
+pub fn init_thread_pool(_num_threads: usize) -> js_sys::Promise {
     js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)
 }
 
