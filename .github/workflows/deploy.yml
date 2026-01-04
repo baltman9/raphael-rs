@@ -156,10 +156,12 @@ jobs:
           set -euo pipefail
           cargo install --locked wasm-tools
           echo "Checking exports of: ${{ steps.wasm_th.outputs.path }}"
-          if wasm-tools objdump -x "${{ steps.wasm_th.outputs.path }}" | grep -q __wasm_init_tls; then
+          if wasm-tools print "${{ steps.wasm_th.outputs.path }}" | grep -q "__wasm_init_tls"; then
             echo "__wasm_init_tls present ✅"
           else
             echo "::error::__wasm_init_tls NOT found on selected wasm (threads/TLS missing)."
+            # show a short snippet for context
+            wasm-tools print "${{ steps.wasm_th.outputs.path }}" | sed -n '1,120p' || true
             exit 2
           fi
 
