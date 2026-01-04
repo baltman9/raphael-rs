@@ -38,7 +38,7 @@ fn initialize(num_threads: Option<NonZeroUsize>) {
 fn initialize(num_threads: Option<NonZeroUsize>) {
     let num_threads = num_threads.unwrap_or_else(default_thread_count);
 
-    // NOTE: crate::init_thread_pool should take a `usize` and return `js_sys::Promise`.
+    // crate::init_thread_pool should take `usize` and return `js_sys::Promise`
     let future = wasm_bindgen_futures::JsFuture::from(crate::init_thread_pool(num_threads.get()));
 
     wasm_bindgen_futures::spawn_local(async move {
@@ -65,17 +65,16 @@ pub fn default_thread_count() -> NonZeroUsize {
 
 #[cfg(target_arch = "wasm32")]
 pub fn default_thread_count() -> NonZeroUsize {
-    // Navigator::hardware_concurrency() is u32 in web-sys; stay with integers
-    let detected_u32: u32 = web_sys::window()
+    // On some web-sys versions, hardware_concurrency() is f64. Use f64 and cast.
+    let detected_f64: f64 = web_sys::window()
         .map(|w| w.navigator().hardware_concurrency())
-        .unwrap_or(4);
+        .unwrap_or(4.0);
 
-    // Convert to usize safely and clamp to a reasonable range [2..=8]
-    let detected = usize::try_from(detected_u32).unwrap_or(4);
-    let threads = detected.saturating_div(2).clamp(2, 8);
+    // Cast to usize, then clamp [2..=8], then halve as a heuristic.
+    let detected = detected_f64 as usize;
+    let threads = (detected / 2).clamp(2, 8);
 
-    // Safe to unwrap because threads >= 2
-    NonZeroUsize::new(threads).unwrap()
+    NonZeroUsize::new(threads.max(1)).unwrap()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
