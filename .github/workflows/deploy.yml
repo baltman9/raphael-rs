@@ -136,7 +136,6 @@ jobs:
           echo "Found TH wasm: $WASM_PATH"
           echo "path=$WASM_PATH" >> "$GITHUB_OUTPUT"
 
-      # Best-effort threaded bindgen; fall back (do NOT fail job)
       - name: Generate wasm-bindgen (THREADED; best-effort with fallback)
         if: ${{ env.WASM_THREADS == '1' }}
         shell: bash
@@ -162,11 +161,39 @@ jobs:
             echo "Threaded wasm-bindgen succeeded."
           fi
 
-      # ==================== Static site with Trunk ====================
-      - name: Build HTML/assets with Trunk (no wasm overrides yet)
+      # ==================== Build HTML without invoking Trunk's Rust pipeline ====================
+      - name: Prepare CI HTML (strip data-trunk & inject our loader)
+        shell: bash
         run: |
-          trunk build index.html --release --dist dist_trunk
+          set -euo pipefail
+          # Base file can be 'index.html' at repo root. Produce a CI-only variant.
+          cp index.html index.ci.html
 
+          # Remove any Trunk Rust tags to prevent Trunk from compiling & running wasm-bindgen.
+          # This removes lines that contain data-trunk (e.g., <link data-trunk rel="rust" ...>).
+          sed -i '/data-trunk/d' index.ci.html
+
+          # Inject a minimal module loader before </body>. We rely on wasm-bindgen's default export.
+          python3 - <<'PY'
+import io,sys,re
+p='index.ci.html'
+s=open(p,'r',encoding='utf-8').read()
+loader = """
+<script type="module">
+  import init from './raphael-xiv.js';
+  init();
+</script>
+""".strip()
+s = re.sub(r'</body>', loader + '\n</body>', s, flags=re.IGNORECASE) if '</body>' in s.lower() else (s + '\n' + loader + '\n')
+open(p,'w',encoding='utf-8').write(s)
+print('Injected loader into index.ci.html')
+PY
+
+      - name: Build HTML/assets with Trunk (static only)
+        run: |
+          trunk build index.ci.html --release --dist dist_trunk
+
+      # ==================== Assemble final site ====================
       - name: Assemble final dist (select correct wasm/js)
         shell: bash
         run: |
@@ -184,9 +211,12 @@ jobs:
             cp -f dist_wbg_nt/raphael-xiv_bg.wasm dist/
           fi
 
-          # Normalize Trunk's hashed names to fixed names (defensive)
-          sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.html || true
-          sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.html || true
+          # If your original index had hashed asset names, normalize just in case (harmless if absent).
+          sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+\.js#raphael-xiv.js#g' dist/index.ci.html || true
+          sed -i -E 's#raphael[-_]xiv-[A-Za-z0-9]+_bg\.wasm#raphael-xiv_bg.wasm#g' dist/index.ci.html || true
+
+          # Serve the CI HTML as index.html in the final dist.
+          mv -f dist/index.ci.html dist/index.html
 
           # Security & caching headers (COOP/COEP required for threads)
           cat > dist/_headers <<'EOF'
@@ -212,7 +242,6 @@ jobs:
           directory:  dist
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- Notify on version bump (unchanged) ---
       - name: Detect version change in Cargo.toml
         id: ver
         shell: bash
