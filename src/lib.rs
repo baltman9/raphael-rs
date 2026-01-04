@@ -1,6 +1,3 @@
-// Enable TLS feature only when building threaded WASM
-#![cfg_attr(all(target_arch = "wasm32", feature = "wasm_threads"), feature(thread_local))]
-
 // Threads ON: re-export real initializer
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 pub use wasm_bindgen_rayon::init_thread_pool;
@@ -23,21 +20,20 @@ mod widgets;
 pub static OOM_PANIC_OCCURED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-// ---------- TLS anchor to force __wasm_init_tls export (threads build) ----------
+// ----- Force a TLS section to exist in the final wasm when threads are enabled -----
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
-#[thread_local]
-static TLS_ANCHOR: u8 = 0;
+#[link_section = ".tdata"]          // place in TLS data segment
+#[thread_local]                      // mark as TLS so rustc emits TLS machinery
+#[used]                              // prevent LTO/GC from stripping it
+static __RAPHAEL_TLS_PIN__: u8 = 0;
 
-/// Public helper to ensure the TLS section is retained so the final WASM
-/// exports `__wasm_init_tls` (required by wasm-bindgen for threads).
+// small helper that can be referenced from bin or anywhere to ensure the TLS
+// symbol is actually read (keeps it obviously “live” to the optimizer).
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
-#[inline(never)]
-pub fn ensure_wasm_tls() {
-    // Volatile read prevents DCE of TLS data / symbol.
-    unsafe { core::ptr::read_volatile(&TLS_ANCHOR) };
-}
-
-// No-op on other targets so callers don't need cfg-gating.
-#[cfg(not(all(target_arch = "wasm32", feature = "wasm_threads")))]
 #[inline(always)]
-pub fn ensure_wasm_tls() {}
+pub fn touch_tls_anchor() {
+    // SAFETY: benign volatile read from a TLS byte
+    unsafe {
+        core::ptr::read_volatile(core::ptr::addr_of!(__RAPHAEL_TLS_PIN__));
+    }
+}
