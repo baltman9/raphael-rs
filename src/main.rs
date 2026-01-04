@@ -8,18 +8,18 @@
 #[thread_local]
 static TLS_ANCHOR: u8 = 0;
 
-// ── Threaded-wasm initializer (non-async; we do not await a JS Promise) ─────────
+// ── Threaded-wasm initializer (non-async; do NOT await a JS Promise) ────────────
 #[cfg(all(target_arch = "wasm32", feature = "wasm_threads"))]
 fn init_wasm_threads() {
     use std::num::NonZeroUsize;
 
-    // Keep types explicit to avoid f64 inference from method overloads.
-    let nav_threads: u32 = web_sys::window()
+    // hardwareConcurrency is a JS number → f64 in web-sys
+    let nav_threads: f64 = web_sys::window()
         .map(|w| w.navigator().hardware_concurrency())
-        .unwrap_or(4);
+        .unwrap_or(4.0);
 
-    // Pick a conservative worker count. You can tweak this policy freely.
-    let workers: usize = nav_threads.max(2) as usize;
+    // Choose a sane lower bound; cast after the float math
+    let workers: usize = nav_threads.max(2.0) as usize;
 
     // Touch TLS so rustc/linker keep TLS sections (__wasm_init_tls)
     unsafe {
@@ -27,13 +27,13 @@ fn init_wasm_threads() {
         core::ptr::read_volatile(p);
     }
 
-    // Kick off the rayon pool via your crate's helper (non-blocking).
+    // Kick off the rayon pool via your crate helper (non-blocking)
     raphael_xiv::thread_pool::attempt_initialization(
-        Some(NonZeroUsize::new(workers).unwrap()),
+        Some(NonZeroUsize::new(workers.max(1)).unwrap()),
     );
 }
 
-// No-op in single-thread builds (keeps code paths cleanly compiled out)
+// No-op in single-thread builds
 #[cfg(not(all(target_arch = "wasm32", feature = "wasm_threads")))]
 fn init_wasm_threads() {}
 
