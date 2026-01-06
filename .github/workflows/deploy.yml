@@ -188,10 +188,25 @@ jobs:
           ls -lah dist_wbg_th | sed -n '1,200p'
 
       # ==================== PREPARE SIMPLE HTML & LOADER (NO TRUNK PIPELINE) ====================
-      - name: Prepare CI HTML (strip data-trunk & inject loader)
+      - name: Prepare CI HTML (strip data-trunk & inject versioned loader)
         shell: bash
         run: |
           set -euo pipefail
+
+          # Read version from root Cargo.toml ([package] version = "x.y.z")
+          VERSION="$(awk '
+            /^\[package\]$/ { p=1; next }
+            /^\[/          { p=0 }
+            p && /^version[[:space:]]*=/ {
+              gsub(/"/,"",$3); print $3; exit
+            }
+          ' Cargo.toml)"
+          if [ -z "${VERSION:-}" ]; then
+            echo "::warning::Could not read version from Cargo.toml; falling back to sha"
+            VERSION="${GITHUB_SHA:0:7}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Using VERSION=$VERSION"
 
           cp index.html index.ci.html 2>/dev/null || true
           if [ ! -f index.ci.html ]; then
@@ -229,19 +244,25 @@ jobs:
           boot();
           JS
 
+          # Inject VERSIONED loader filename into HTML
+          LOADER_TAG="<script type=\"module\" src=\"./loader.${VERSION}.js\"></script>"
           if grep -qi '</body>' index.ci.html; then
-            awk 'BEGIN{IGNORECASE=1}
-                 /<\/body>/{print "<script type=\"module\" src=\"./loader.js\"></script>"; print; next}
+            awk -v tag="$LOADER_TAG" 'BEGIN{IGNORECASE=1}
+                 /<\/body>/{print tag; print; next}
                  {print}' index.ci.html > index.tmp && mv index.tmp index.ci.html
           else
-            echo '<script type="module" src="./loader.js"></script>' >> index.ci.html
+            echo "$LOADER_TAG" >> index.ci.html
           fi
 
       # ==================== ASSEMBLE FINAL SITE ====================
-      - name: Assemble final dist (threaded if enabled)
+      - name: Assemble final dist (threaded if enabled, versioned loader, no-store HTML)
         shell: bash
         run: |
           set -euo pipefail
+
+          # VERSION comes from previous step via GITHUB_ENV
+          : "${VERSION:=${GITHUB_SHA:0:7}}"
+          echo "Assembling with VERSION=$VERSION"
 
           rm -rf dist
           mkdir -p dist
@@ -256,7 +277,7 @@ jobs:
 
           # Static bits
           cp -f index.ci.html dist/index.html
-          cp -f loader.js dist/
+          cp -f loader.js "dist/loader.${VERSION}.js"
 
           # Copy base folders
           [ -d assets ] && rsync -a assets/ dist/assets/
@@ -293,7 +314,7 @@ jobs:
             exit 1
           fi
 
-          # _redirects (keep, but root mirror should make it unnecessary)
+          # _redirects (kept; root mirror should make it unnecessary)
           printf "%s\n" \
           "/action-icons/*  /action-icons/:splat  200" \
           "/fonts/*         /fonts/:splat         200" \
@@ -308,7 +329,7 @@ jobs:
             Cross-Origin-Embedder-Policy: require-corp
 
           /index.html
-            Cache-Control: no-cache
+            Cache-Control: no-store, must-revalidate
 
           /*.js
             Cache-Control: public, max-age=31536000, immutable
