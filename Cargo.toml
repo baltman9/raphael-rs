@@ -19,7 +19,6 @@ clippy.default_trait_access = "warn"
 clippy.explicit_iter_loop = "warn"
 clippy.unnecessary_semicolon = "warn"
 clippy.redundant_closure_for_method_calls = "warn"
-clippy.option_if_let_else = "warn"
 clippy.use_self = "warn"
 
 [workspace.dependencies]
@@ -34,7 +33,7 @@ web-time = "1.1.0"
 
 [package]
 name = "raphael-xiv"
-version = "0.26.1"
+version = "0.26.2"
 edition = "2024"
 default-run = "raphael-xiv"
 
@@ -82,6 +81,10 @@ web-sys = "0.3"
 eframe = { version = "0.33.2", features = ["persistence"] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
+
+[dev-dependencies]
+expect-test = "1.5.1"
+strum = "0.27"
 
 [profile.release]
 opt-level = 3
