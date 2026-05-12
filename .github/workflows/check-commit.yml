@@ -36,4 +36,4 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Run all tests
-        run: cargo test --verbose --workspace
+        run: cargo +1.92.0 test --verbose --workspace
