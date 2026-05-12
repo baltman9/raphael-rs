@@ -62,7 +62,7 @@ semver = "1.0"
 self-replace = "1.5.0"
 tempfile = "3.24.0"
 ehttp = { version = "0.5.0", features = ["json"] }
-eframe = { version = "0.33.2", default-features = false, features = [
+eframe = { version = "0.34.1", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "wayland",
@@ -79,7 +79,7 @@ wasm-bindgen-rayon = { version = "1.3", features = ["no-bundler"], optional = tr
 wasm-bindgen-futures = "0.4"
 console_error_panic_hook = "0.1.7"
 web-sys = "=0.3.85"
-eframe = { version = "0.33.2", features = ["persistence"] }
+eframe = { version = "0.34.1", features = ["persistence"] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 
