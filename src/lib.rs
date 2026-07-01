@@ -48,7 +48,6 @@ mod elements;
 mod fonts;
 mod solve;
 pub mod thread_pool;
-mod widgets;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod update;
