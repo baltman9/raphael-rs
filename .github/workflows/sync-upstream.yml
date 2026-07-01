@@ -1,7 +1,8 @@
 name: Sync from upstream (main)
 
 on:
-  schedule: [{ cron: "0 2 * * *" }]
+  schedule:
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -10,6 +11,7 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,7 +34,7 @@ jobs:
 
       - name: Configure committer
         run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Merge upstream/main -> main
@@ -41,14 +43,15 @@ jobs:
           set -o pipefail
           {
             git checkout main
-            BEFORE=$(git rev-parse HEAD)
+            BEFORE="$(git rev-parse HEAD)"
             git merge --ff-only upstream/main || git merge --no-edit upstream/main
-            AFTER=$(git rev-parse HEAD)
+            AFTER="$(git rev-parse HEAD)"
             echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
-            echo "after=$AFTER"  >> "$GITHUB_OUTPUT"
+            echo "after=$AFTER" >> "$GITHUB_OUTPUT"
           } 2>&1 | tee -a sync.log
 
       - name: Keep our workflows (ignore upstream workflow changes)
+        if: ${{ success() }}
         run: |
           set -o pipefail
           {
@@ -60,15 +63,15 @@ jobs:
           } 2>&1 | tee -a sync.log
 
       - name: Push to origin (only if changed)
-        if: steps.merge.outputs.before != steps.merge.outputs.after
+        if: ${{ success() && steps.merge.outputs.before != steps.merge.outputs.after }}
         env:
           PUSH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
           set -o pipefail
-          git push https://baltman9:${PUSH_TOKEN}@github.com/${{ github.repository }} main 2>&1 | tee -a sync.log
+          git push "https://baltman9:${PUSH_TOKEN}@github.com/${{ github.repository }}" main 2>&1 | tee -a sync.log
 
       - name: Notify deploy (only if changed)
-        if: steps.merge.outputs.before != steps.merge.outputs.after
+        if: ${{ success() && steps.merge.outputs.before != steps.merge.outputs.after }}
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -91,7 +94,8 @@ jobs:
           conflicts="$(grep '^CONFLICT' sync.log | sed -E 's/^CONFLICT \([^)]*\): Merge conflict in /• /' || true)"
 
           if [ -n "$conflicts" ]; then
-            msg="❌ **Upstream sync failed**
+            msg="$(cat <<EOF
+❌ **Upstream sync failed**
 
 Merge conflict detected.
 
@@ -99,11 +103,14 @@ Files:
 $conflicts
 
 Run:
-$run_url"
+$run_url
+EOF
+)"
           else
             last_error="$(tail -n 20 sync.log)"
 
-            msg="❌ **Upstream sync failed**
+            msg="$(cat <<EOF
+❌ **Upstream sync failed**
 
 No merge-conflict file list was detected. Last sync log lines:
 
@@ -112,7 +119,9 @@ $last_error
 \`\`\`
 
 Run:
-$run_url"
+$run_url
+EOF
+)"
           fi
 
           payload="$(jq -n --arg content "$msg" '{content: $content}')"
