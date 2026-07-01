@@ -4,24 +4,23 @@ use egui::{
 };
 use egui_extras::Column;
 use raphael_data::{
-    Consumable, Locale, RLVLS, Recipe, find_recipes, find_stellar_missions, get_game_settings,
-    get_job_name,
+    Consumable, CosmicExplorationZone, Locale, RLVLS, Recipe, RecipeSearchEntry, RecipeSearchQuery,
+    StellarMissionSearchEntry, StellarSearchQuery, find_recipes, find_stellar_missions,
+    get_cosmic_exploration_zone_name, get_game_settings, get_job_name,
 };
 use raphael_translations::{t, t_format};
 
 use crate::{
     config::{CrafterConfig, QualitySource, RecipeConfiguration, RecipeSource},
-    context::{AppContext, SolverConfig},
-    widgets::{
-        DropDown, GameDataNameLabel, NameSource,
-        util::{TableColumnWidth, calculate_column_widths},
+    context::{AppContext, RecipeSearchFilters, RecipeSearchState, SolverConfig},
+    elements::{
+        util::{self, TableColumnWidth},
+        widgets::{DropDown, GameDataNameLabel, NameSource, collapse_persisted},
     },
 };
 
-use super::util;
-
-#[derive(Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-enum SearchDomain {
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SearchDomain {
     #[default]
     Recipes,
     StellarMissions,
@@ -39,32 +38,28 @@ impl SearchDomain {
 #[derive(Default)]
 struct RecipeFinder {}
 
-impl ComputerMut<(&str, Locale), Vec<raphael_data::RecipeSearchEntry>> for RecipeFinder {
-    fn compute(&mut self, (text, locale): (&str, Locale)) -> Vec<raphael_data::RecipeSearchEntry> {
-        find_recipes(text, locale).collect::<Vec<_>>()
+impl ComputerMut<RecipeSearchQuery<'_>, Vec<RecipeSearchEntry>> for RecipeFinder {
+    fn compute(&mut self, query: RecipeSearchQuery) -> Vec<RecipeSearchEntry> {
+        find_recipes(query).collect::<Vec<_>>()
     }
 }
 
-type RecipeSearchCache<'a> = FrameCache<Vec<raphael_data::RecipeSearchEntry>, RecipeFinder>;
+type RecipeSearchCache<'a> = FrameCache<Vec<RecipeSearchEntry>, RecipeFinder>;
 
 #[derive(Default)]
 struct StellarMissionFinder {}
 
-impl ComputerMut<(&str, Locale), Vec<raphael_data::StellarMissionSearchEntry>>
-    for StellarMissionFinder
-{
-    fn compute(
-        &mut self,
-        (text, locale): (&str, Locale),
-    ) -> Vec<raphael_data::StellarMissionSearchEntry> {
-        find_stellar_missions(text, locale).collect::<Vec<_>>()
+impl ComputerMut<StellarSearchQuery<'_>, Vec<StellarMissionSearchEntry>> for StellarMissionFinder {
+    fn compute(&mut self, query: StellarSearchQuery) -> Vec<StellarMissionSearchEntry> {
+        find_stellar_missions(query).collect::<Vec<_>>()
     }
 }
 
 type StellarMissionSearchCache<'a> =
-    FrameCache<Vec<raphael_data::StellarMissionSearchEntry>, StellarMissionFinder>;
+    FrameCache<Vec<StellarMissionSearchEntry>, StellarMissionFinder>;
 
 pub struct RecipeSelect<'a> {
+    search_state: &'a mut RecipeSearchState,
     crafter_config: &'a mut CrafterConfig,
     recipe_config: &'a mut RecipeConfiguration,
     solver_config: &'a mut SolverConfig,
@@ -77,6 +72,7 @@ impl<'a> RecipeSelect<'a> {
     pub fn new(app_context: &'a mut AppContext) -> Self {
         let AppContext {
             locale,
+            search_state,
             recipe_config,
             selected_food,
             selected_potion,
@@ -86,6 +82,7 @@ impl<'a> RecipeSelect<'a> {
         } = app_context;
 
         Self {
+            search_state: &mut search_state.recipe,
             crafter_config,
             recipe_config,
             solver_config,
@@ -110,34 +107,40 @@ impl<'a> RecipeSelect<'a> {
 
     fn draw_normal_recipe_select(&mut self, ui: &mut egui::Ui) {
         let locale = self.locale;
-        let mut search_text = String::new();
-        let mut search_domain = SearchDomain::default();
-        ui.ctx().data_mut(|data| {
-            if let Some(text) = data.get_persisted::<String>(Id::new("RECIPE_SEARCH_TEXT")) {
-                search_text = text;
-            }
-            if let Some(domain) =
-                data.get_persisted::<SearchDomain>(Id::new("RECIPE_SEARCH_DOMAIN"))
-            {
-                search_domain = domain;
-            }
-        });
+        let filters_active = self.search_state.filters_active();
+        let Self {
+            search_state:
+                RecipeSearchState {
+                    search_domain,
+                    search_text,
+                    filters,
+                    ..
+                },
+            ..
+        } = self;
 
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
             ui.add(DropDown::new(
                 "RECIPE_SEARCH_DOMAIN",
-                &mut search_domain,
+                search_domain,
                 [SearchDomain::Recipes, SearchDomain::StellarMissions],
                 |search_domain: SearchDomain| search_domain.display(locale),
             ));
-            if egui::TextEdit::singleline(&mut search_text)
-                .desired_width(f32::INFINITY)
+            let button_text_size = egui::TextStyle::Button.resolve(ui.style()).size;
+            let icon_size = egui::Vec2::splat(button_text_size);
+            let search_text_edit_width = ui.available_width()
+                - (icon_size.x + ui.style().spacing.button_padding.x * 2.0)
+                - ui.style().spacing.item_spacing.x;
+            if egui::TextEdit::singleline(search_text)
+                .desired_width(search_text_edit_width)
                 .hint_text(t!(locale, "🔍 Search"))
                 .ui(ui)
                 .changed()
             {
-                search_text = search_text.replace('\0', "");
+                *search_text = search_text.replace('\0', "");
             }
+            Self::draw_recipe_filter_button(ui, filters_active, icon_size);
         });
 
         ui.separator();
@@ -147,7 +150,11 @@ impl<'a> RecipeSelect<'a> {
                 let search_result = ui.ctx().memory_mut(|mem| {
                     mem.caches
                         .cache::<RecipeSearchCache<'_>>()
-                        .get((&search_text, locale))
+                        .get(RecipeSearchQuery {
+                            text: search_text,
+                            locale,
+                            filters: filters.construct_recipe_filter(self.crafter_config),
+                        })
                         .clone()
                 });
                 self.draw_recipe_select_table(ui, search_result);
@@ -156,23 +163,22 @@ impl<'a> RecipeSelect<'a> {
                 let search_result = ui.ctx().memory_mut(|mem| {
                     mem.caches
                         .cache::<StellarMissionSearchCache<'_>>()
-                        .get((&search_text, locale))
+                        .get(StellarSearchQuery {
+                            text: search_text,
+                            locale,
+                            filters: filters.construct_stellar_mission_filter(self.crafter_config),
+                        })
                         .clone()
                 });
                 self.draw_mission_recipe_select(ui, search_result);
             }
         }
-
-        ui.ctx().data_mut(|data| {
-            data.insert_persisted(Id::new("RECIPE_SEARCH_TEXT"), search_text);
-            data.insert_persisted(Id::new("RECIPE_SEARCH_DOMAIN"), search_domain);
-        });
     }
 
     fn draw_recipe_select_table(
         &mut self,
         ui: &mut egui::Ui,
-        search_result: Vec<raphael_data::RecipeSearchEntry>,
+        search_result: Vec<RecipeSearchEntry>,
     ) {
         let locale = self.locale;
         let line_height = ui.spacing().interact_size.y;
@@ -180,7 +186,7 @@ impl<'a> RecipeSelect<'a> {
         let table_height = 6.3 * line_height + 6.0 * line_spacing;
 
         // Column::remainder().clip(true) is buggy when resizing the table
-        let column_widths = calculate_column_widths(
+        let column_widths = util::calculate_column_widths(
             ui,
             [
                 TableColumnWidth::SelectButton,
@@ -233,7 +239,7 @@ impl<'a> RecipeSelect<'a> {
         });
 
         // See above note, 'Column::remainder().clip(true) is buggy [...]'
-        let column_widths = calculate_column_widths(
+        let column_widths = util::calculate_column_widths(
             ui,
             [TableColumnWidth::JobName, TableColumnWidth::Remaining],
             locale,
@@ -443,39 +449,138 @@ impl<'a> RecipeSelect<'a> {
             });
         });
     }
+
+    fn draw_recipe_filter_modal(&mut self, ctx: &egui::Context) {
+        let locale = self.locale;
+        let RecipeSearchFilters {
+            active_job_only,
+            cosmic_exploration_zone,
+        } = &mut self.search_state.filters;
+
+        egui::containers::Modal::new(egui::Id::new("RECIPE_FILTER_MODAL")).show(ctx, |ui| {
+            ui.set_width(
+                (ctx.content_rect().width() - ui.style().spacing.item_spacing.x * 4.0)
+                    .clamp(0.0, 395.0),
+            );
+            ui.style_mut().spacing.item_spacing = egui::Vec2::new(4.0, 4.0);
+            ui.label(egui::RichText::new(t!(locale, "Recipe filters")).strong());
+            ui.separator();
+            ui.checkbox(active_job_only, t!(locale, "Active job only"));
+            ui.separator();
+            ui.label(
+                egui::RichText::new(t!(locale, "Stellar missions"))
+                    .color(ui.visuals().widgets.hovered.text_color()),
+            );
+            ui.horizontal_wrapped(|ui| {
+                for zone in [
+                    CosmicExplorationZone::SinusArdorum,
+                    CosmicExplorationZone::Phaenna,
+                    CosmicExplorationZone::Oizys,
+                    CosmicExplorationZone::Auxesia,
+                ] {
+                    let response = ui.selectable_label(
+                        cosmic_exploration_zone.is_none_or(|selected| selected == zone),
+                        get_cosmic_exploration_zone_name(zone, locale),
+                    );
+                    if response.clicked() {
+                        if *cosmic_exploration_zone != Some(zone) {
+                            *cosmic_exploration_zone = Some(zone);
+                        } else {
+                            *cosmic_exploration_zone = None;
+                        }
+                    }
+                }
+            });
+            ui.separator();
+            ui.vertical_centered_justified(|ui| {
+                if ui.button(t!(locale, "Close")).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    set_filter_modal_visibility(ctx, false);
+                }
+            });
+        });
+    }
+
+    fn draw_recipe_filter_button(ui: &mut egui::Ui, filters_active: bool, icon_size: egui::Vec2) {
+        // Placing the first point at the top left causes the shape to be misdrawn.
+        // As a workaround, the first point is placed in the middle horizontally and the top left one is added at the end.
+        const FUNNEL_POINTS_RELATIVE: [[f32; 2]; 7] = [
+            [0.5, 0.055],
+            [1.0, 0.055],
+            [0.6, 0.55],
+            [0.6, 0.975],
+            [0.4, 0.875],
+            [0.4, 0.55],
+            [0.0, 0.055],
+        ];
+
+        ui.scope(|ui| {
+            if filters_active {
+                util::use_highlighted_widget_bg_color(ui);
+            }
+            let icon_id = ui.next_auto_id();
+            let response = egui::Button::new(egui::Atom::custom(icon_id, icon_size)).atom_ui(ui);
+            if let Some(rect) = response.rect(icon_id) {
+                let points = FUNNEL_POINTS_RELATIVE
+                    .into_iter()
+                    .map(|point| rect.lerp_inside(point))
+                    .collect();
+                let fill = if response.hovered() {
+                    ui.visuals().widgets.hovered.text_color()
+                } else if response.is_pointer_button_down_on() {
+                    ui.visuals().widgets.active.text_color()
+                } else {
+                    ui.visuals().widgets.inactive.text_color()
+                };
+                ui.painter_at(rect).add(egui::epaint::PathShape {
+                    points,
+                    closed: true,
+                    fill,
+                    stroke: egui::epaint::PathStroke::NONE,
+                });
+            }
+            if response.clicked() {
+                set_filter_modal_visibility(ui.ctx(), true);
+            }
+        });
+    }
+}
+
+fn filter_modal_is_visible(ctx: &egui::Context) -> bool {
+    let id = egui::Id::new("RECIPE_FILTER_MODAL_VISIBLE");
+    ctx.data(|data| data.get_temp(id) == Some(true))
+}
+
+fn set_filter_modal_visibility(ctx: &egui::Context, visible: bool) {
+    let id = egui::Id::new("RECIPE_FILTER_MODAL_VISIBLE");
+    ctx.data_mut(|data| data.insert_temp(id, visible));
 }
 
 impl Widget for RecipeSelect<'_> {
     fn ui(mut self, ui: &mut egui::Ui) -> egui::Response {
         let locale = self.locale;
-        let mut show_custom_recipe_select = false;
-        ui.ctx().data_mut(|data| {
-            if let RecipeSource::Custom { .. } = self.recipe_config.recipe_source
-                && let Some(selection) =
-                    data.get_persisted(Id::new("RECIPE_SEARCH_CUSTOM_SELECTED"))
-            {
-                show_custom_recipe_select = selection;
-            }
-        });
 
+        if filter_modal_is_visible(ui.ctx()) {
+            self.draw_recipe_filter_modal(ui.ctx());
+        }
         ui.group(|ui| {
             ui.style_mut().spacing.item_spacing = egui::vec2(8.0, 3.0);
             ui.vertical(|ui| {
                 let mut collapsed = false;
 
                 ui.horizontal(|ui| {
-                    util::collapse_persisted(
-                        ui,
-                        Id::new("RECIPE_SEARCH_COLLAPSED"),
-                        &mut collapsed,
-                    );
+                    collapse_persisted(ui, Id::new("RECIPE_SEARCH_COLLAPSED"), &mut collapsed);
                     ui.label(egui::RichText::new(t!(locale, "Recipe")).strong());
                     ui.add(GameDataNameLabel::new(self.recipe_config.recipe(), locale));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui
-                            .checkbox(&mut show_custom_recipe_select, t!(locale, "Custom"))
+                            .checkbox(
+                                &mut self.search_state.show_custom_recipe_select,
+                                t!(locale, "Custom"),
+                            )
                             .changed()
-                            && show_custom_recipe_select
+                            && self.search_state.show_custom_recipe_select
                             && let RecipeSource::Normal { .. } = self.recipe_config.recipe_source
                         {
                             let default_game_settings = get_game_settings(
@@ -501,18 +606,11 @@ impl Widget for RecipeSelect<'_> {
 
                 ui.separator();
 
-                if show_custom_recipe_select {
+                if self.search_state.show_custom_recipe_select {
                     self.draw_custom_recipe_select(ui);
                 } else {
                     self.draw_normal_recipe_select(ui);
                 }
-
-                ui.ctx().data_mut(|data| {
-                    data.insert_persisted(
-                        Id::new("RECIPE_SEARCH_CUSTOM_SELECTED"),
-                        show_custom_recipe_select,
-                    );
-                });
             });
         })
         .response

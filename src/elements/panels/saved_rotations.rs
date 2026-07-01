@@ -10,11 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config::{CrafterConfig, QualitySource, RecipeConfiguration, RecipeSource},
-    context::{AppContext, SolverConfig},
-    widgets::util::max_text_width,
+    context::{AppContext, RecipeSearchState, SearchState, SolverConfig},
+    elements::{util, widgets::collapse_temporary},
+    solve::{RunningSolveInfo, SolveParameters},
 };
-
-use super::util;
 
 fn generate_unique_rotation_id() -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
@@ -85,19 +84,21 @@ pub struct Rotation {
 }
 
 impl Rotation {
-    pub fn new(app_context: &AppContext, actions: Vec<Action>) -> Self {
-        let AppContext {
-            locale,
+    pub fn new(info: &RunningSolveInfo, actions: Vec<Action>, locale: Locale) -> Self {
+        let RunningSolveInfo {
+            solve_params:
+                SolveParameters {
+                    settings: game_settings,
+                    initial_quality,
+                    solver_config,
+                },
             recipe_config,
-            selected_food: food,
-            selected_potion: potion,
-            crafter_config,
-            solver_config,
+            food,
+            potion,
+            stats,
             ..
-        } = app_context;
-        let game_settings = app_context.game_settings();
-        let initial_quality = app_context.initial_quality();
-        let name = raphael_data::get_item_name(recipe_config.recipe().item_id, false, *locale)
+        } = info;
+        let name = raphael_data::get_item_name(recipe_config.recipe().item_id, false, locale)
             .unwrap_or(t!(locale, "Unknown item").to_owned());
         let solver_params = format!(
             "Raphael v{}{}{}",
@@ -118,13 +119,13 @@ impl Rotation {
             actions,
             recipe_info: Some(RecipeInfo::from(&recipe_config.recipe_source)),
             solve_info: Some(SolveInfo::new(
-                &game_settings,
-                initial_quality,
+                game_settings,
+                *initial_quality,
                 solver_config,
             )),
             food: food.map(|consumable| (consumable.item_id, consumable.hq)),
             potion: potion.map(|consumable| (consumable.item_id, consumable.hq)),
-            crafter_stats: *crafter_config.active_stats(),
+            crafter_stats: *stats,
         }
     }
 }
@@ -267,6 +268,7 @@ struct RotationWidget<'a> {
     deleted: &'a mut bool,
     rotation: &'a Rotation,
     actions: &'a mut Vec<Action>,
+    show_custom_recipe_select: &'a mut bool,
     crafter_config: &'a mut CrafterConfig,
     solver_config: &'a mut SolverConfig,
     recipe_config: &'a mut RecipeConfiguration,
@@ -277,6 +279,7 @@ struct RotationWidget<'a> {
 struct LimitedAppContext<'a> {
     pub locale: Locale,
     pub default_load_operation: LoadOperation,
+    pub show_custom_recipe_select: &'a mut bool,
     pub recipe_config: &'a mut RecipeConfiguration,
     pub selected_food: &'a mut Option<Consumable>,
     pub selected_potion: &'a mut Option<Consumable>,
@@ -299,6 +302,7 @@ impl<'a> RotationWidget<'a> {
             deleted,
             rotation,
             actions,
+            show_custom_recipe_select: limited_app_context.show_custom_recipe_select,
             crafter_config: limited_app_context.crafter_config,
             solver_config: limited_app_context.solver_config,
             recipe_config: limited_app_context.recipe_config,
@@ -314,7 +318,7 @@ impl<'a> RotationWidget<'a> {
     fn show_rotation_title(&mut self, ui: &mut egui::Ui, collapsed: &mut bool) {
         let locale = self.locale;
         ui.horizontal(|ui| {
-            util::collapse_temporary(ui, self.id_salt("collapsed").into(), collapsed);
+            collapse_temporary(ui, self.id_salt("collapsed").into(), collapsed);
             ui.label(egui::RichText::new(&self.rotation.name).strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.add(egui::Button::new("🗑")).clicked() {
@@ -406,6 +410,7 @@ impl<'a> RotationWidget<'a> {
                         };
                         self.crafter_config.selected_job = recipe.job_id;
                         self.solver_config.stellar_steady_hand_charges = 0;
+                        *self.show_custom_recipe_select = false;
                     } else {
                         log::debug!("Unable to find recipe with recipe_id={:?}", recipe_id);
                     }
@@ -420,6 +425,7 @@ impl<'a> RotationWidget<'a> {
                     };
                     self.crafter_config.selected_job = recipe.job_id;
                     self.solver_config.stellar_steady_hand_charges = 0;
+                    *self.show_custom_recipe_select = true;
                 }
             }
         }
@@ -480,7 +486,7 @@ impl<'a> RotationWidget<'a> {
             level = self.rotation.crafter_stats.level,
             job = job_id.map_or("", |job_id| raphael_data::get_job_name(job_id, locale))
         );
-        let max_key_width = max_text_width(
+        let max_key_width = util::max_text_width(
             ui,
             [
                 t!(locale, "Recipe"),
@@ -589,6 +595,15 @@ impl egui::Widget for SavedRotationsWidget<'_> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let AppContext {
             locale,
+            search_state:
+                SearchState {
+                    recipe:
+                        RecipeSearchState {
+                            show_custom_recipe_select,
+                            ..
+                        },
+                    ..
+                },
             recipe_config,
             selected_food,
             selected_potion,
@@ -601,6 +616,7 @@ impl egui::Widget for SavedRotationsWidget<'_> {
         let mut limited_app_context = LimitedAppContext {
             locale: *locale,
             default_load_operation: config.default_load_operation,
+            show_custom_recipe_select,
             recipe_config,
             selected_food,
             selected_potion,

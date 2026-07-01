@@ -44,6 +44,9 @@ pub use app::MacroSolverApp;
 
 mod config;
 mod context;
+mod elements;
+mod fonts;
+mod solve;
 pub mod thread_pool;
 mod widgets;
 

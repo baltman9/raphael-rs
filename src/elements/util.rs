@@ -5,19 +5,13 @@ use raphael_data::{
 use raphael_sim::*;
 use raphael_translations::{t, t_format};
 
-pub fn add_sized_labeled_widget<'a>(
-    ui: &mut egui::Ui,
-    label: impl Into<egui::Atom<'a>>,
-    size: impl Into<egui::Vec2>,
-    widget: impl egui::Widget,
-) {
-    let custom_atom_id = ui.next_auto_id();
-    let response = egui::AtomLayout::new((label.into(), egui::Atom::custom(custom_atom_id, size)))
-        .allocate(ui)
-        .paint(ui);
-    if let Some(rect) = response.rect(custom_atom_id) {
-        ui.put(rect, widget);
-    }
+pub const HIGHLIGHTED_WIDGET_BG_COLOR: egui::Color32 =
+    egui::Color32::from_rgba_unmultiplied_const(144, 238, 144, 128);
+
+pub fn use_highlighted_widget_bg_color(ui: &mut egui::Ui) {
+    ui.visuals_mut().widgets.inactive.weak_bg_fill = HIGHLIGHTED_WIDGET_BG_COLOR;
+    ui.visuals_mut().widgets.hovered.weak_bg_fill = HIGHLIGHTED_WIDGET_BG_COLOR;
+    ui.visuals_mut().widgets.active.weak_bg_fill = HIGHLIGHTED_WIDGET_BG_COLOR;
 }
 
 pub fn effect_string(
@@ -63,10 +57,10 @@ pub fn effect_string(
     effect
 }
 
-pub fn text_width(ui: &egui::Ui, text: impl Into<String>, text_style: TextStyle) -> f32 {
+pub fn text_width(ui: &egui::Ui, text: impl ToString, text_style: TextStyle) -> f32 {
     let font_id = text_style.resolve(ui.style());
     ui.fonts_mut(|fonts| {
-        let galley = fonts.layout_no_wrap(text.into(), font_id, egui::Color32::default());
+        let galley = fonts.layout_no_wrap(text.to_string(), font_id, egui::Color32::default());
         galley.rect.width()
     })
 }
@@ -135,28 +129,6 @@ pub fn calculate_column_widths<const N: usize>(
     })
 }
 
-pub fn collapse_persisted(ui: &mut egui::Ui, id: egui::Id, collapsed: &mut bool) {
-    *collapsed = ui.data_mut(|data| *data.get_persisted_mut_or(id, *collapsed));
-    let button_text = match collapsed {
-        true => "⏵",
-        false => "⏷",
-    };
-    if ui.button(button_text).clicked() {
-        ui.data_mut(|data| data.insert_persisted(id, !*collapsed));
-    }
-}
-
-pub fn collapse_temporary(ui: &mut egui::Ui, id: egui::Id, collapsed: &mut bool) {
-    *collapsed = ui.data_mut(|data| *data.get_temp_mut_or(id, *collapsed));
-    let button_text = match collapsed {
-        true => "⏵",
-        false => "⏷",
-    };
-    if ui.button(button_text).clicked() {
-        ui.data_mut(|data| data.insert_temp(id, !*collapsed));
-    }
-}
-
 #[cfg(target_arch = "wasm32")]
 pub fn get_action_icon(action: Action, job_id: u8) -> egui::Image<'static> {
     let image_path = format!(
@@ -172,17 +144,62 @@ pub fn get_action_icon(action: Action, job_id: u8) -> egui::Image<'static> {
 macro_rules! action_icon {
     ( $name:literal, $job_id:expr ) => {
         match $job_id {
-            0 => egui::include_image!(concat!("../../assets/action-icons/CRP/", $name, ".webp")),
-            1 => egui::include_image!(concat!("../../assets/action-icons/BSM/", $name, ".webp")),
-            2 => egui::include_image!(concat!("../../assets/action-icons/ARM/", $name, ".webp")),
-            3 => egui::include_image!(concat!("../../assets/action-icons/GSM/", $name, ".webp")),
-            4 => egui::include_image!(concat!("../../assets/action-icons/LTW/", $name, ".webp")),
-            5 => egui::include_image!(concat!("../../assets/action-icons/WVR/", $name, ".webp")),
-            6 => egui::include_image!(concat!("../../assets/action-icons/ALC/", $name, ".webp")),
-            7 => egui::include_image!(concat!("../../assets/action-icons/CUL/", $name, ".webp")),
+            0 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/CRP/",
+                $name,
+                ".webp"
+            )),
+            1 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/BSM/",
+                $name,
+                ".webp"
+            )),
+            2 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/ARM/",
+                $name,
+                ".webp"
+            )),
+            3 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/GSM/",
+                $name,
+                ".webp"
+            )),
+            4 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/LTW/",
+                $name,
+                ".webp"
+            )),
+            5 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/WVR/",
+                $name,
+                ".webp"
+            )),
+            6 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/ALC/",
+                $name,
+                ".webp"
+            )),
+            7 => egui::include_image!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/action-icons/CUL/",
+                $name,
+                ".webp"
+            )),
             _ => {
                 log::warn!("Unknown job id {}. Falling back to job id 0.", $job_id);
-                egui::include_image!(concat!("../../assets/action-icons/CRP/", $name, ".webp"))
+                egui::include_image!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/assets/action-icons/CRP/",
+                    $name,
+                    ".webp"
+                ))
             }
         }
     };

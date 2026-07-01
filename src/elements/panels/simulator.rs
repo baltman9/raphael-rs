@@ -4,11 +4,10 @@ use raphael_translations::{t, t_format};
 
 use crate::{
     config::QualityTarget,
-    context::{AppContext, SolverConfig},
-    widgets::util::max_text_width,
+    context::AppContext,
+    elements::{util, widgets::HelpText},
+    solve::{SolveParameters, SolveState},
 };
-
-use super::{HelpText, util};
 
 pub struct Simulator<'a> {
     settings: Settings,
@@ -20,30 +19,19 @@ pub struct Simulator<'a> {
     locale: Locale,
 }
 
-fn config_changed(
-    settings: &raphael_sim::Settings,
-    initial_quality: u16,
-    solver_config: &SolverConfig,
-    ctx: &egui::Context,
-) -> bool {
-    ctx.data(|data| {
-        match data.get_temp::<(Settings, u16, SolverConfig)>(egui::Id::new("LAST_SOLVE_PARAMS")) {
-            Some((saved_settings, saved_initial_quality, saved_solver_config)) => {
-                *settings != saved_settings
-                    || initial_quality != saved_initial_quality
-                    || *solver_config != saved_solver_config
-            }
-            None => false,
-        }
-    })
+fn config_changed(app_context: &AppContext, solve_state: &SolveState) -> bool {
+    !solve_state.solving()
+        && solve_state
+            .last_solve_info()
+            .is_some_and(|info| info.solve_params != SolveParameters::from(app_context))
 }
 
 impl<'a> Simulator<'a> {
-    pub fn new(app_context: &'a AppContext, ctx: &egui::Context, actions: &'a [Action]) -> Self {
+    pub fn new(app_context: &'a AppContext, solve_state: &'a SolveState) -> Self {
+        let config_changed = config_changed(app_context, solve_state);
         let AppContext {
             locale,
             recipe_config,
-            solver_config,
             crafter_config,
             ..
         } = app_context;
@@ -53,12 +41,11 @@ impl<'a> Simulator<'a> {
             .get(recipe_config.recipe().item_id)
             .map(|item| item.always_collectable)
             .unwrap_or_default();
-        let config_changed = config_changed(&settings, initial_quality, solver_config, ctx);
         Self {
             settings,
             initial_quality,
             job_id: crafter_config.selected_job,
-            actions,
+            actions: solve_state.actions(),
             item_always_collectable,
             config_changed,
             locale: *locale,
@@ -76,7 +63,7 @@ impl Simulator<'_> {
                     ui.label(egui::RichText::new(t!(locale, "Simulation")).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_visible(
-                            !self.actions.is_empty() && self.config_changed,
+                            self.config_changed,
                             egui::Label::new(
                                 egui::RichText::new(t!(
                                     locale,
@@ -91,7 +78,7 @@ impl Simulator<'_> {
 
                 ui.separator();
 
-                let max_text_width = max_text_width(
+                let max_text_width = util::max_text_width(
                     ui,
                     [
                         t!(locale, "Progress"),
@@ -101,6 +88,8 @@ impl Simulator<'_> {
                     ],
                     egui::TextStyle::Body,
                 );
+                let max_value_text_width =
+                    5.0 * util::max_text_width(ui, 0..=9, egui::TextStyle::Body);
 
                 let text_size = egui::vec2(max_text_width, ui.spacing().interact_size.y);
                 let text_layout = egui::Layout::right_to_left(egui::Align::Center);
@@ -114,8 +103,10 @@ impl Simulator<'_> {
                             state.progress as f32 / self.settings.max_progress as f32,
                         )
                         .text(progress_bar_text(
+                            ui,
                             state.progress,
                             self.settings.max_progress,
+                            max_value_text_width,
                             locale,
                         ))
                         .corner_radius(0),
@@ -130,8 +121,10 @@ impl Simulator<'_> {
                     ui.add(
                         egui::ProgressBar::new(quality as f32 / self.settings.max_quality as f32)
                             .text(progress_bar_text(
+                                ui,
                                 quality,
                                 self.settings.max_quality,
+                                max_value_text_width,
                                 locale,
                             ))
                             .corner_radius(0),
@@ -147,8 +140,10 @@ impl Simulator<'_> {
                             state.durability as f32 / self.settings.max_durability as f32,
                         )
                         .text(progress_bar_text(
+                            ui,
                             state.durability,
                             self.settings.max_durability,
+                            max_value_text_width,
                             locale,
                         ))
                         .corner_radius(0),
@@ -161,7 +156,13 @@ impl Simulator<'_> {
                     });
                     ui.add(
                         egui::ProgressBar::new(state.cp as f32 / self.settings.max_cp as f32)
-                            .text(progress_bar_text(state.cp, self.settings.max_cp, locale))
+                            .text(progress_bar_text(
+                                ui,
+                                state.cp,
+                                self.settings.max_cp,
+                                max_value_text_width,
+                                locale,
+                            ))
                             .corner_radius(0),
                     );
                 });
@@ -231,9 +232,10 @@ impl Simulator<'_> {
                             .add(image)
                             .on_hover_text(raphael_data::action_name(*action, self.locale));
                         if error.is_err() {
-                            egui::Image::new(egui::include_image!(
-                                "../../assets/action-icons/disabled.webp"
-                            ))
+                            egui::Image::new(egui::include_image!(concat!(
+                                env!("CARGO_MANIFEST_DIR"),
+                                "/assets/action-icons/disabled.webp"
+                            )))
                             .tint(egui::Color32::GRAY)
                             .paint_at(ui, response.rect);
                         }
@@ -283,14 +285,31 @@ impl egui::Widget for Simulator<'_> {
 }
 
 fn progress_bar_text<T: Copy + std::cmp::Ord + std::ops::Sub<Output = T> + std::fmt::Display>(
+    ui: &egui::Ui,
     value: T,
     maximum: T,
+    max_value_text_width: f32,
     locale: Locale,
-) -> String {
-    if value > maximum {
+) -> impl Into<egui::WidgetText> {
+    let text = if value > maximum {
         let overflow = value - maximum;
-        t_format!(locale, "{value: >5} / {maximum}  (+{overflow} overflow)")
+        t_format!(locale, "{value} / {maximum}  (+{overflow} overflow)")
     } else {
-        format!("{: >5} / {}", value, maximum)
-    }
+        format!("{} / {}", value, maximum)
+    };
+
+    let value_text_width = util::text_width(ui, value, egui::TextStyle::Body);
+
+    let style = ui.style();
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &text,
+        max_value_text_width - value_text_width,
+        egui::TextFormat {
+            font_id: egui::TextStyle::Body.resolve(style),
+            color: egui::Color32::PLACEHOLDER,
+            ..Default::default()
+        },
+    );
+    job
 }

@@ -6,8 +6,8 @@ use std::{
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 
 use crate::{
-    CL_ICON_CHAR, HQ_ICON_CHAR, MEALS, POTIONS, RECIPES, STELLAR_MISSIONS, get_raw_item_name,
-    get_stellar_mission_name,
+    CL_ICON_CHAR, CosmicExplorationZone, HQ_ICON_CHAR, MEALS, POTIONS, RECIPES, STELLAR_MISSIONS,
+    get_raw_item_name, get_stellar_mission_name,
 };
 
 // The matcher allocates a huge chunk of heap memory on creation, so it's best
@@ -29,6 +29,24 @@ impl<T> AsRef<str> for MatcherCandidate<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Hash)]
+pub struct RecipeFilters {
+    pub job_id: Option<u8>,
+}
+
+impl RecipeFilters {
+    fn apply(&self, recipe: &crate::Recipe) -> bool {
+        self.job_id.is_none_or(|job_id| job_id == recipe.job_id)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+pub struct RecipeSearchQuery<'a> {
+    pub text: &'a str,
+    pub locale: crate::Locale,
+    pub filters: RecipeFilters,
+}
+
 fn preprocess_pattern(pattern: &str) -> String {
     pattern
         .chars()
@@ -37,42 +55,64 @@ fn preprocess_pattern(pattern: &str) -> String {
 }
 
 pub type RecipeSearchEntry = (u32, &'static crate::Recipe);
-pub fn find_recipes(
-    search_string: &str,
-    locale: crate::Locale,
-) -> impl Iterator<Item = RecipeSearchEntry> {
+pub fn find_recipes(query: RecipeSearchQuery) -> impl Iterator<Item = RecipeSearchEntry> {
     let pattern = Pattern::parse(
-        &preprocess_pattern(search_string),
+        &preprocess_pattern(query.text),
         CaseMatching::Ignore,
         Normalization::Smart,
     );
-    let entries = RECIPES.entries().filter_map(|(recipe_id, recipe)| {
-        let item_name = get_raw_item_name(recipe.item_id, locale)?;
-        Some(MatcherCandidate {
-            haystack: item_name,
-            associated_data: (recipe_id, recipe),
-        })
-    });
+    let entries = RECIPES
+        .entries()
+        .filter(|(_, recipe)| query.filters.apply(recipe))
+        .filter_map(|(recipe_id, recipe)| {
+            let item_name = get_raw_item_name(recipe.item_id, query.locale)?;
+            Some(MatcherCandidate {
+                haystack: item_name,
+                associated_data: (recipe_id, recipe),
+            })
+        });
     let matches = pattern.match_list(entries, MATCHER.lock().as_mut().unwrap());
     matches
         .into_iter()
         .map(|(entry, _score)| entry.associated_data)
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Hash)]
+pub struct StellarMissionFilters {
+    pub job_id: Option<u8>,
+    pub zone: Option<crate::CosmicExplorationZone>,
+}
+
+impl StellarMissionFilters {
+    fn apply(&self, mission_id: u32, mission: &crate::StellarMission) -> bool {
+        self.job_id.is_none_or(|job_id| job_id == mission.job_id)
+            && self
+                .zone
+                .is_none_or(|zone| zone == CosmicExplorationZone::from_mission_id(mission_id))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Hash)]
+pub struct StellarSearchQuery<'a> {
+    pub text: &'a str,
+    pub locale: crate::Locale,
+    pub filters: StellarMissionFilters,
+}
+
 pub type StellarMissionSearchEntry = (u32, &'static crate::StellarMission);
 pub fn find_stellar_missions(
-    search_string: &str,
-    locale: crate::Locale,
+    query: StellarSearchQuery,
 ) -> impl Iterator<Item = StellarMissionSearchEntry> {
     let pattern = Pattern::parse(
-        &preprocess_pattern(search_string),
+        &preprocess_pattern(query.text),
         CaseMatching::Ignore,
         Normalization::Smart,
     );
     let mission_entries = STELLAR_MISSIONS
         .entries()
+        .filter(|(mission_id, mission)| query.filters.apply(*mission_id, mission))
         .filter_map(|(mission_id, mission)| {
-            let mission_name = get_stellar_mission_name(mission_id, locale)?;
+            let mission_name = get_stellar_mission_name(mission_id, query.locale)?;
             Some(MatcherCandidate {
                 haystack: mission_name,
                 associated_data: (mission_id, mission),
@@ -80,10 +120,12 @@ pub fn find_stellar_missions(
         });
     let recipe_entries = STELLAR_MISSIONS
         .entries()
+        .filter(|(mission_id, mission)| query.filters.apply(*mission_id, mission))
         .flat_map(|(mission_id, mission)| {
             mission.recipe_ids.iter().filter_map(move |&recipe_id| {
+                // Missions are one for a single crafter job and therefore don't have to be filtered again
                 let recipe = RECIPES.get(recipe_id)?;
-                let item_name = get_raw_item_name(recipe.item_id, locale)?;
+                let item_name = get_raw_item_name(recipe.item_id, query.locale)?;
                 Some(MatcherCandidate {
                     haystack: item_name,
                     associated_data: (mission_id, mission),
