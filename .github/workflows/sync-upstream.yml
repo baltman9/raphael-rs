@@ -94,34 +94,10 @@ jobs:
           conflicts="$(grep '^CONFLICT' sync.log | sed -E 's/^CONFLICT \([^)]*\): Merge conflict in /• /' || true)"
 
           if [ -n "$conflicts" ]; then
-            msg="$(cat <<EOF
-❌ **Upstream sync failed**
-
-Merge conflict detected.
-
-Files:
-$conflicts
-
-Run:
-$run_url
-EOF
-)"
+            msg="$(printf '❌ **Upstream sync failed**\n\nMerge conflict detected.\n\nFiles:\n%s\n\nRun:\n%s' "$conflicts" "$run_url")"
           else
             last_error="$(tail -n 20 sync.log)"
-
-            msg="$(cat <<EOF
-❌ **Upstream sync failed**
-
-No merge-conflict file list was detected. Last sync log lines:
-
-\`\`\`
-$last_error
-\`\`\`
-
-Run:
-$run_url
-EOF
-)"
+            msg="$(printf '❌ **Upstream sync failed**\n\nNo merge-conflict file list was detected. Last sync log lines:\n\n```text\n%s\n```\n\nRun:\n%s' "$last_error" "$run_url")"
           fi
 
           payload="$(jq -n --arg content "$msg" '{content: $content}')"
