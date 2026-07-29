@@ -82,8 +82,10 @@ fn main() -> eframe::Result<()> {
         .and_then(|env_var| env_var.parse::<u32>().ok());
 
     let wgpu_options = eframe::egui_wgpu::WgpuConfiguration {
-        present_mode,
-        desired_maximum_frame_latency,
+        surface: eframe::egui_wgpu::SurfaceConfig {
+            present_mode,
+            desired_maximum_frame_latency,
+        },
         ..Default::default()
     };
 
